@@ -1,0 +1,32 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "pycemrg-carp-tools"
+version = "0.1.0"
+authors = [
+  { name="Jose Alonso Solis-Lemus", email="j.solis-lemus@imperial.ac.uk" },
+]
+description = "A high-level SDK for CARPentry/openCARP command-line tools."
+readme = "README.md"
+license = { file="LICENSE" }
+requires-python = ">=3.8"
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+]
+
+# CRITICAL: This project depends on our other library, pycemrg.
+# We specify a minimum version to ensure compatibility.
+dependencies = [
+    "pycemrg>=0.1.0"
+]
+
+[project.urls]
+Homepage = "https://github.com/OpenHeartDevelopers/pycemrg-carp-tools"
+"Bug Tracker" = "https://github.com/OpenHeartDevelopers/pycemrg-carp-tools/issues"
+
+[tool.setuptools.packages.find]
+where = ["src"]
