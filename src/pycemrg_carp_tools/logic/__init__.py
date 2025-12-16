@@ -5,7 +5,15 @@ This module provides high-level, multi-step workflows and scientific
 logic built on top of the low-level tool wrappers.
 """
 
-# As you add classes like UVCCalculator, you will import them here.
-# from .uvc_calculator import UVCCalculator
-#
-# __all__ = ["UVCCalculator"]
+from .contracts import (
+    VentricularSurfacePaths,
+    AtrialSurfacePaths,
+    # ... other contracts
+)
+from .surfaces import SurfaceLogic
+
+__all__ = [
+    "SurfaceLogic",
+    "VentricularSurfacePaths",
+    "AtrialSurfacePaths",
+]
