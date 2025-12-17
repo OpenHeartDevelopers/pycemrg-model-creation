@@ -1,4 +1,4 @@
-# src/pycemrg_carp_tools/config.py
+# src/pycemrg_model_creation/config.py
 
 from dataclasses import dataclass
 from typing import Dict, List, Union, Optional

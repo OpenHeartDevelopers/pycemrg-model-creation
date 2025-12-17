@@ -1,4 +1,4 @@
-# src/pycemrg_carp_tools/__init__.py
+# src/pycemrg_model_creation/__init__.py
 
 """
 pycemrg-carp-tools: A Pythonic SDK for the CARPentry/openCARP ecosystem.

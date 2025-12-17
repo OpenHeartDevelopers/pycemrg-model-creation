@@ -1,4 +1,4 @@
-# src/pycemrg_carp_tools/types.py
+# src/pycemrg_model_creation/types.py
 
 from enum import Enum
 

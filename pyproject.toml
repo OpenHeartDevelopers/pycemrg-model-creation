@@ -3,12 +3,12 @@ requires = ["setuptools>=61.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "pycemrg-carp-tools"
+name = "pycemrg-model-creation"
 version = "0.1.0"
 authors = [
   { name="Jose Alonso Solis-Lemus", email="j.solis-lemus@imperial.ac.uk" },
 ]
-description = "A high-level SDK for CARPentry/openCARP command-line tools."
+description = "A high-level framework for cardiac model creation and simulation setup."
 readme = "README.md"
 license = { file="LICENSE" }
 requires-python = ">=3.8"
@@ -25,8 +25,8 @@ dependencies = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/OpenHeartDevelopers/pycemrg-carp-tools"
-"Bug Tracker" = "https://github.com/OpenHeartDevelopers/pycemrg-carp-tools/issues"
+Homepage = "https://github.com/OpenHeartDevelopers/pycemrg-model-creation"
+"Bug Tracker" = "https://github.com/OpenHeartDevelopers/pycemrg-model-creation/issues"
 
 [tool.setuptools.packages.find]
 where = ["src"]

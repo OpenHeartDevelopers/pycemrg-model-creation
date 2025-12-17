@@ -1,4 +1,4 @@
-# src/pycemrg_carp_tools/logic/surfaces.py;
+# src/pycemrg_model_creation/logic/surfaces.py;
 
 """
 Surface extraction logic for UVC (Universal Ventricular Coordinate) generation.
@@ -15,11 +15,11 @@ from typing import List, Optional
 
 import numpy as np
 
-from pycemrg_carp_tools.config import TagsConfig 
-from pycemrg_carp_tools.logic.contracts import VentricularSurfacePaths, AtrialSurfacePaths, BiVMeshPaths, AtrialMeshPaths, UVCSurfaceExtractionPaths
-from pycemrg_carp_tools.tools import CarpWrapper, MeshtoolWrapper, 
-from pycemrg_carp_tools.types import Chamber, SurfaceType 
-import pycemrg_carp_tools.utilities.mesh as mshu
+from pycemrg_model_creation.config import TagsConfig 
+from pycemrg_model_creation.logic.contracts import VentricularSurfacePaths, AtrialSurfacePaths, BiVMeshPaths, AtrialMeshPaths, UVCSurfaceExtractionPaths
+from pycemrg_model_creation.tools import CarpWrapper, MeshtoolWrapper, 
+from pycemrg_model_creation.types import Chamber, SurfaceType 
+import pycemrg_model_creation.utilities.mesh as mshu
 
 class SurfaceExtractionError(Exception):
     """Base exception for surface extraction errors"""

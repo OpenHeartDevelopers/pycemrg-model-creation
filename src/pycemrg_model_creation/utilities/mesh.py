@@ -1,4 +1,4 @@
-# src/pycemrg_carp_tools/utilities/mesh_utils.py
+# src/pycemrg_model_creation/utilities/mesh_utils.py
 
 import numpy as np
 import logging
@@ -121,7 +121,7 @@ def find_connected_components(surface_path: Path, output_dir: Path) -> List[str]
     Returns:
         List of connected component base names (without extensions)
 
-    TODO: Implement in pycemrg_carp_tools.utils.surface_utils
+    TODO: Implement in pycemrg_model_creation.utils.surface_utils
     """
     raise NotImplementedError("find_connected_components must be implemented")
 
@@ -140,7 +140,7 @@ def keep_largest_n_components(
     Returns:
         List of n largest component base names, sorted by size (descending)
 
-    TODO: Implement in pycemrg_carp_tools.utils.surface_utils
+    TODO: Implement in pycemrg_model_creation.utils.surface_utils
     """
     raise NotImplementedError("keep_largest_n_components must be implemented")
 
@@ -155,7 +155,7 @@ def compute_surface_center_of_gravity(pts: np.ndarray) -> np.ndarray:
     Returns:
         3D coordinate of center of gravity
 
-    TODO: Implement in pycemrg_carp_tools.utils.geometry_utils
+    TODO: Implement in pycemrg_model_creation.utils.geometry_utils
     """
     return np.mean(pts, axis=0)
 
@@ -174,7 +174,7 @@ def compute_mesh_region_cog(
     Returns:
         3D coordinate of center of gravity for tagged region
 
-    TODO: Implement in pycemrg_carp_tools.utils.geometry_utils
+    TODO: Implement in pycemrg_model_creation.utils.geometry_utils
     """
     raise NotImplementedError("compute_mesh_region_cog must be implemented")
 
@@ -193,7 +193,7 @@ def identify_surface_orientation(
     Returns:
         Fraction of triangles with outward-pointing normals (0.0 to 1.0)
 
-    TODO: Implement in pycemrg_carp_tools.utils.geometry_utils
+    TODO: Implement in pycemrg_model_creation.utils.geometry_utils
     """
     raise NotImplementedError("identify_surface_orientation must be implemented")
 
@@ -210,7 +210,7 @@ def prepare_vtx_files_for_uvc(
         surface_dir: Directory containing surface meshes
         output_vtx_paths: Mapping of surface names to output VTX paths
 
-    TODO: Implement in pycemrg_carp_tools.utils.vtx_utils
+    TODO: Implement in pycemrg_model_creation.utils.vtx_utils
     """
     raise NotImplementedError("prepare_vtx_files_for_uvc must be implemented")
 
@@ -226,6 +226,6 @@ def remove_septum_from_endo(
         septum_path: Path to septum surface
         output_path: Path for output (LV endo without septum)
 
-    TODO: Implement in pycemrg_carp_tools.utils.surface_utils
+    TODO: Implement in pycemrg_model_creation.utils.surface_utils
     """
     raise NotImplementedError("remove_septum_from_endo must be implemented")

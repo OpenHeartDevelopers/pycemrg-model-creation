@@ -1,4 +1,4 @@
-# src/pycemrg_carp_tools/logic/__init__.py
+# src/pycemrg_model_creation/logic/__init__.py
 
 """
 This module provides high-level, multi-step workflows and scientific

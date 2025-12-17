@@ -1,4 +1,4 @@
-# src/pycemrg_carp_tools/logic/contracts.py
+# src/pycemrg_model_creation/logic/contracts.py
 
 from dataclasses import dataclass
 from pathlib import Path
