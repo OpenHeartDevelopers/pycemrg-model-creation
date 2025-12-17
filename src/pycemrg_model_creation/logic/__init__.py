@@ -8,12 +8,20 @@ logic built on top of the low-level tool wrappers.
 from .contracts import (
     VentricularSurfacePaths,
     AtrialSurfacePaths,
-    # ... other contracts
+    BiVMeshPaths,
+    AtrialMeshPaths,
+    UVCSurfaceExtractionPaths  
 )
+
+from .builders import PathContractBuilder
 from .surfaces import SurfaceLogic
 
 __all__ = [
     "SurfaceLogic",
+    "PathContractBuilder",
     "VentricularSurfacePaths",
     "AtrialSurfacePaths",
+    "BiVMeshPaths",
+    "AtrialMeshPaths",
+    "UVCSurfaceExtractionPaths"
 ]

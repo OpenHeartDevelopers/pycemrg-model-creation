@@ -1,10 +1,12 @@
-# src/pycemrg_model_creation/utilities/mesh_utils.py
+# src/pycemrg_model_creation/utilities/mesh.py
 
-import numpy as np
 import logging
+import numpy as np
+import pyvista as pv
 
+from numpy.typing import NDArray
 from pathlib import Path
-from typing import List, Dict, Union, Optional, Tuple
+from typing import List, Dict, Tuple
 from enum import Enum
 
 logger = logging.getLogger(__name__)
@@ -20,7 +22,7 @@ class ElemType(Enum):
     Tr = (1, 2, 3)  # Triangles
     Ln = (1, 2)  # Lines
 
-
+# READING FUNCTIONS
 def read_carp_mesh(
     mesh_base_path: Path, elem_type: ElemType = ElemType.Tt, read_tags: bool = True
 ) -> Tuple[np.ndarray, np.ndarray]:
@@ -109,123 +111,321 @@ def read_lon(lon_path: Path) -> np.ndarray:
     logger.info(f"Reading lon file {lon_path.name}")
     return np.loadtxt(lon_path, dtype=float, skiprows=1)
 
-
-def find_connected_components(surface_path: Path, output_dir: Path) -> List[str]:
+def read_surf(surface_path: Path) -> np.ndarray:
     """
-    Find all connected components files matching a pattern.
+    Reads a CARP .surf file, returning only the triangle connectivity.
 
     Args:
-        surface_path: Base path for surface
-        output_dir: Directory to search in
+        surface_path: Path to the .surf file.
 
     Returns:
-        List of connected component base names (without extensions)
-
-    TODO: Implement in pycemrg_model_creation.utils.surface_utils
+        A NumPy array of shape (n_triangles, 3) with vertex indices.
     """
-    raise NotImplementedError("find_connected_components must be implemented")
+    logger.info(f"Reading surface connectivity from {surface_path.name}")
+    # The .surf file format is "Tr vtx1 vtx2 vtx3". We skip the "Tr" column.
+    return np.loadtxt(surface_path, dtype=int, skiprows=1, usecols=[1, 2, 3])
+
+
+# WRITING FUNCTIONS
+
+def write_surf(surface_cells: NDArray[np.int_], output_path: Path) -> None: # refactor note: use for write_surface
+    """
+    Writes a surface connectivity array to a CARP .surf file.
+
+    Args:
+        surface_cells: A NumPy array of shape (n_triangles, 3) with vertex indices.
+        output_path: Path to the output .surf file.
+    """
+    assert surface_cells.ndim == 2 and surface_cells.shape[1] == 3, \
+        "Input array must be of shape (n, 3)."
+
+    header = str(surface_cells.shape[0])
+    # The format string 'Tr %d %d %d' prepends 'Tr' to each line of integer data.
+    np.savetxt( output_path, surface_cells, fmt='Tr %d %d %d', header=header, comments='' )
+    logger.info(f"Successfully wrote surface to {output_path}")
+
+def write_vtx(vertex_indices: NDArray[np.int_], output_path: Path) -> None:
+    """
+    Writes a vertex array to a CARP .vtx file.
+
+    Args:
+        vertex_indices: A 1D NumPy array of vertex indices.
+        output_path: Path to the output .vtx file.
+    """
+    assert vertex_indices.ndim == 1, "Input array must be 1-dimensional."
+
+    # The header for a .vtx file includes the count and the 'intra' keyword.
+    header = f"{vertex_indices.shape[0]}\nintra"
+    np.savetxt( output_path, vertex_indices, fmt='%d', header=header, comments=''  )
+    logger.info(f"Successfully wrote vertices to {output_path}")
+
+
+def write_pts(points: NDArray[np.float64], output_path: Path) -> None: # refactor note: use for write_pnts 
+    """
+    Writes a points coordinate array to a CARP .pts file.
+
+    Args:
+        points: A NumPy array of shape (n_points, 3) with vertex coordinates.
+        output_path: Path to the output .pts file.
+    """
+    assert points.ndim == 2 and points.shape[1] == 3, \
+        "Input array must be of shape (n, 3)."
+
+    header = str(points.shape[0])
+    # Using '%.8f' for precision, consistent with `write_dat`.
+    # Using a space delimiter as it's more standard than tab.
+    np.savetxt(output_path,points,fmt='%.8f',delimiter=' ',header=header,comments='' )
+    logger.info(f"Successfully wrote points to {output_path}")
+
+def write_dat(data: NDArray, output_path: Path) -> None:
+    """
+    Writes a NumPy array to a .dat file with specified precision.
+
+    Args:
+        data: The NumPy array to save.
+        output_path: The path for the output file.
+    """
+    np.savetxt(output_path, data, fmt='%.8f')
+    logger.info(f"Successfully wrote data to {output_path}")
+
+def connected_component_to_surface(
+    eidx_path: Path,
+    input_surface_path: Path, 
+    output_surface_path: Path
+) -> None:
+	eidx = np.fromfile(eidx_path.with_suffix(".eidx"), dtype=int, count=-1)
+	nod = np.fromfile(eidx_path.with_suffix(".nod"), dtype=int, count=-1)
+	surf = np.loadtxt(input_surface_path,dtype=int,skiprows=1,usecols=[1,2,3])
+	vtx = surf2vtx(surf)
+
+	subsurf = surf[eidx,:]
+	subvtx = vtx[nod]
+
+	write_surf(subsurf,output_surface_path.with_suffix(".surf"))
+	write_vtx(subvtx,output_surface_path.with_suffix(".vtx"))
+
+# CONVERSION FUNCTIONS
+def surf2vtx(surf: np.ndarray) -> np.ndarray:
+	return np.unique(surf.flatten())
+
+def surf2vtk(
+    mesh_base_path: Path,
+    surface_path: Path,
+    output_vtk_path: Path
+) -> None:
+    """
+    Convert a CARP surface mesh to a VTK PolyData file.
+
+    Args:
+        mesh_base_path: Path to the base mesh (e.g., 'mesh/my_mesh'),
+                        used to locate the corresponding .pts file.
+        surface_path: Path to the source surface mesh (.surf file).
+        output_vtk_path: Path for the output VTK file (.vtk).
+    """
+    logger.info(f"Converting surface {surface_path.name} to VTK format")
+
+    # 1. Read input files using existing helpers
+    points_all = read_pts(mesh_base_path.with_suffix(".pts"))
+    surface_cells_original = read_surf(surface_path)
+
+    # 2. Extract surface-specific vertices and re-index cells
+    unique_vertex_indices = surf2vtx(surface_cells_original)
+    surface_points = points_all[unique_vertex_indices]
+
+    # 3. Vectorized Re-indexing: Fast and efficient
+    # Create a lookup map from old vertex index to new surface-local index
+    index_map = np.full(unique_vertex_indices.max() + 1, -1, dtype=int)
+    index_map[unique_vertex_indices] = np.arange(len(unique_vertex_indices))
+    
+    # Apply the map to the entire cell array in one operation
+    surface_cells_reindexed = index_map[surface_cells_original]
+
+    # 4. Create and save PyVista PolyData object
+    # PyVista requires a faces array in the format [3, v0, v1, v2, 3, v3, v4, v5, ...]
+    num_cells = surface_cells_reindexed.shape[0]
+    padding = np.full((num_cells, 1), 3)
+    faces = np.hstack((padding, surface_cells_reindexed)).flatten()
+
+    surface_mesh = pv.PolyData(surface_points, faces=faces)
+    surface_mesh.save(output_vtk_path, binary=False)
+    logger.info(f"Successfully saved VTK surface to {output_vtk_path}")
+
+
+# SURFACE OPERATIONS
+def find_numbered_parts(
+    directory: Path,
+    base_prefix: str
+) -> List[str]:
+    """
+    Find all numbered part files matching a base prefix pattern.
+    
+    Searches for files with pattern: {base_prefix}.part{N}.elem
+    where N starts at 0 and increments sequentially.
+    
+    Args:
+        directory: Directory to search for part files
+        base_prefix: Base prefix to match (e.g., "epi_endo_CC")
+        
+    Returns:
+        List of base names without extensions (e.g., ["epi_endo_CC.part0", "epi_endo_CC.part1"])
+        
+    Example:
+        >>> find_numbered_parts(Path("/tmp"), "mesh_CC")
+        ["mesh_CC.part0", "mesh_CC.part1", "mesh_CC.part2"]
+    """
+    parts = []
+    part_idx = 0
+
+    part_name = f"{base_prefix}.part{part_idx}"
+    elem_file = directory / f"{part_name}.elem"
+
+    while elem_file.exists():
+        
+        parts.append(part_name)
+        part_idx += 1
+
+        part_name = f"{base_prefix}.part{part_idx}"
+        elem_file = directory / f"{part_name}.elem"
+    
+    return parts
+    
 
 
 def keep_largest_n_components(
-    component_names: List[str], tmp_dir: Path, n: int
+    component_names: List[str],
+    directory: Path,
+    keep_n: int,
+    delete_smaller: bool = True,
 ) -> List[str]:
     """
-    Keep only the n largest connected components by element count.
+    Identifies the N largest mesh components and deletes the others.
+
+    Component size is determined by the number of elements in the .elem file.
+    This function deletes all associated files (e.g., .elem, .pts) for the
+    smaller, discarded components.
 
     Args:
-        component_names: List of component base names
-        tmp_dir: Directory containing the components
-        n: Number of components to keep
+        component_names: List of component base names (e.g., "mesh.part0").
+        directory: The directory containing the component files.
+        keep_n: The number of largest components to keep.
+        delete_smaller: If True, all files for smaller components are deleted.
 
     Returns:
-        List of n largest component base names, sorted by size (descending)
+        A list of the base names of the components that were kept, sorted
+        by size from largest to smallest.
 
-    TODO: Implement in pycemrg_model_creation.utils.surface_utils
+    Raises:
+        ValueError: If `keep_n` is greater than the number of components found.
     """
-    raise NotImplementedError("keep_largest_n_components must be implemented")
+    if len(component_names) < keep_n:
+        raise ValueError(
+            f"Cannot keep {keep_n} components: only {len(component_names)} found."
+        )
 
+    component_data = []
+    for name in component_names:
+        elem_path = directory / f"{name}.elem"
+        if not elem_path.is_file():
+            logger.warning(f"Component file not found, skipping: {elem_path}")
+            continue
 
-def compute_surface_center_of_gravity(pts: np.ndarray) -> np.ndarray:
-    """
-    Compute center of gravity for a set of surface points.
+        # Correctly call read_elem using the ElemType enum
+        elements = read_elem(elem_path, elem_type=ElemType.Tr, read_tags=False)
+        component_data.append({"name": name, "size": elements.shape[0]})
 
-    Args:
-        pts: Nx3 array of point coordinates
+    # Sort components by size in descending order
+    component_data.sort(key=lambda x: x["size"], reverse=True)
 
-    Returns:
-        3D coordinate of center of gravity
+    kept_components = [cd["name"] for cd in component_data[:keep_n]]
+    components_to_delete = [cd["name"] for cd in component_data[keep_n:]]
 
-    TODO: Implement in pycemrg_model_creation.utils.geometry_utils
-    """
-    return np.mean(pts, axis=0)
+    logger.info(f"Keeping the {keep_n} largest of {len(component_data)} components:")
+    for i, cd in enumerate(component_data[:keep_n]):
+        logger.info(f"  {i+1}. {cd['name']} (size: {cd['size']} triangles)")
 
+    if delete_smaller and components_to_delete:
+        logger.info(f"Deleting {len(components_to_delete)} smaller components...")
+        for comp_name in components_to_delete:
+            for file_path in directory.glob(f"{comp_name}.*"):
+                try:
+                    file_path.unlink()
+                    logger.debug(f"Deleted {file_path.name}")
+                except OSError as e:
+                    logger.error(f"Error deleting file {file_path}: {e}")
 
-def compute_mesh_region_cog(
-    mesh_pts: np.ndarray, mesh_elem: np.ndarray, tag_value: int
-) -> np.ndarray:
-    """
-    Compute center of gravity for all elements with a specific tag.
-
-    Args:
-        mesh_pts: Nx3 array of mesh points
-        mesh_elem: Mx5 array of elements (4 connectivity + 1 tag)
-        tag_value: Tag value to filter elements
-
-    Returns:
-        3D coordinate of center of gravity for tagged region
-
-    TODO: Implement in pycemrg_model_creation.utils.geometry_utils
-    """
-    raise NotImplementedError("compute_mesh_region_cog must be implemented")
-
-
-def identify_surface_orientation(
-    pts: np.ndarray, surf: np.ndarray, reference_point: np.ndarray
-) -> float:
-    """
-    Determine if surface normals point outward from reference point.
-
-    Args:
-        pts: Nx3 array of surface points
-        surf: Mx3 array of triangle connectivity
-        reference_point: 3D reference point (e.g., chamber center)
-
-    Returns:
-        Fraction of triangles with outward-pointing normals (0.0 to 1.0)
-
-    TODO: Implement in pycemrg_model_creation.utils.geometry_utils
-    """
-    raise NotImplementedError("identify_surface_orientation must be implemented")
-
-
-def prepare_vtx_files_for_uvc(
-    surface_dir: Path, output_vtx_paths: Dict[str, Path]
-) -> None:
-    """
-    Prepare VTX (vertex) files required for UVC computation.
-
-    This involves converting surface mesh boundaries to VTX format.
-
-    Args:
-        surface_dir: Directory containing surface meshes
-        output_vtx_paths: Mapping of surface names to output VTX paths
-
-    TODO: Implement in pycemrg_model_creation.utils.vtx_utils
-    """
-    raise NotImplementedError("prepare_vtx_files_for_uvc must be implemented")
+    return kept_components
 
 
 def remove_septum_from_endo(
-    lv_endo_path: Path, septum_path: Path, output_path: Path
+    endo_surface_path: Path,
+    septum_surface_path: Path,
+    output_path: Path,
 ) -> None:
     """
-    Remove septum surface from LV endocardium surface.
+    Removes a septal surface from an endocardial surface.
+
+    This function identifies all triangles in the endocardial surface where all
+    three vertices are also part of the septal surface, and removes them.
+    The result is the endocardial free wall.
 
     Args:
-        lv_endo_path: Path to LV endocardium surface
-        septum_path: Path to septum surface
-        output_path: Path for output (LV endo without septum)
-
-    TODO: Implement in pycemrg_model_creation.utils.surface_utils
+        endo_surface_path: Path to the endocardial .surf file.
+        septum_surface_path: Path to the septal .surf file.
+        output_path: Path for the output .surf file (the free wall).
     """
-    raise NotImplementedError("remove_septum_from_endo must be implemented")
+    logger.info(
+        f"Removing septum {septum_surface_path.name} from "
+        f"endocardium {endo_surface_path.name}"
+    )
+
+    # 1. Read surface and septum data using existing helpers
+    endo_cells: NDArray[np.int_] = read_surf(endo_surface_path)
+    septum_cells: NDArray[np.int_] = read_surf(septum_surface_path)
+
+    # Get the unique vertex indices that define the septum
+    septum_vtx: NDArray[np.int_] = surf2vtx(septum_cells)
+
+    # 2. Vectorized triangle removal (replaces the slow for-loop)
+    # Create a boolean array of the same shape as endo_cells,
+    # where True indicates a vertex is part of the septum.
+    is_septum_vertex_mask = np.isin(endo_cells, septum_vtx)
+
+    # Count how many vertices in each triangle are septal vertices.
+    # A triangle is part of the septum if this count is 3.
+    septum_vertex_count_per_triangle = np.sum(is_septum_vertex_mask, axis=1)
+
+    # The free wall triangles are those with fewer than 3 septal vertices.
+    freewall_mask = septum_vertex_count_per_triangle < 3
+    freewall_triangles = endo_cells[freewall_mask]
+
+    logger.info(
+        f"Identified {len(freewall_triangles)} free wall triangles "
+        f"(removed {len(endo_cells) - len(freewall_triangles)})."
+    )
+
+    # 3. Write the resulting free wall surface
+    write_surf(freewall_triangles, output_path)
+
+# VTX UTILS
+def generate_vtx_from_surf(input_surf_path: Path, output_vtx_path: Path) -> None:
+    """
+    Generates a .vtx file from a .surf file.
+
+    Reads a surface file, extracts the unique vertex indices, and writes them
+    to a .vtx file. This is a direct one-to-one conversion.
+
+    Args:
+        input_surf_path: Path to the source .surf file.
+        output_vtx_path: Path for the destination .vtx file.
+    """
+    logger.info(f"Generating VTX file for {input_surf_path.name} -> {output_vtx_path.name}")
+    try:
+        surface_cells = read_surf(input_surf_path)
+        vertex_indices = surf2vtx(surface_cells)
+        write_vtx(vertex_indices, output_vtx_path)
+    except FileNotFoundError:
+        logger.error(f"Input file not found: {input_surf_path}")
+        raise
+    except Exception as e:
+        logger.error(f"Failed to generate VTX from {input_surf_path.name}: {e}")
+        raise

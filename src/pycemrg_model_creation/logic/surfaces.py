@@ -17,9 +17,11 @@ import numpy as np
 
 from pycemrg_model_creation.config import TagsConfig 
 from pycemrg_model_creation.logic.contracts import VentricularSurfacePaths, AtrialSurfacePaths, BiVMeshPaths, AtrialMeshPaths, UVCSurfaceExtractionPaths
-from pycemrg_model_creation.tools import CarpWrapper, MeshtoolWrapper, 
+from pycemrg_model_creation.tools import CarpWrapper, MeshtoolWrapper 
 from pycemrg_model_creation.types import Chamber, SurfaceType 
+
 import pycemrg_model_creation.utilities.mesh as mshu
+import pycemrg_model_creation.utilities.geometry as geom
 
 class SurfaceExtractionError(Exception):
     """Base exception for surface extraction errors"""
@@ -47,7 +49,7 @@ class SurfaceLogic:
         logic.run_ventricular_extraction(paths, tags)
     """
 
-    def __init__(self, meshtool):
+    def __init__(self, meshtool: MeshtoolWrapper):
         """
         Initialize SurfaceLogic with a meshtool wrapper.
 
@@ -58,7 +60,7 @@ class SurfaceLogic:
         self.logger = logging.getLogger(__name__)
 
     # VENTRICULAR SURFACE EXTRACTION
-    def extract_ventricular_base(
+    def extract_ventricular_base( 
         self, paths: VentricularSurfacePaths, tags: TagsConfig
     ) -> None:
         """
@@ -143,46 +145,48 @@ class SurfaceLogic:
 
             # Step 2: Extract connected components (should be 3: epi, LV endo, RV endo)
             self.logger.info("Extracting connected components")
-            # NOTE: extract_unreachable not in provided MeshtoolWrapper
-            # This should be added to MeshtoolWrapper or implemented as utility
-            # For now, assume it creates files with pattern: {base_name}_CC.part_*.{ext}
 
-            # TODO: Call meshtool extract unreachable
-            # self.meshtool.extract_unreachable(
-            #     input_surface=paths.epi_endo_combined.with_suffix(".surfmesh.vtk"),
-            #     output_base=paths.epi_endo_cc_base,
-            #     ofmt=["vtk", "carp_txt"],
-            #     ifmt="vtk"
-            # )
-
-            # Step 3: Find connected components
-            cc_names = find_connected_components(paths.epi_endo_cc_base, paths.tmp_dir)
-
-            if len(cc_names) < 3:
-                raise SurfaceIdentificationError(
-                    f"Expected 3 connected components, found {len(cc_names)}"
+            for output_ext in ["vtk", "carp_txt"]:
+                self.meshtool.extract_unreachable(
+                    input_mesh_path=paths.epi_endo_combined.with_suffix(".surfmesh"),
+                    submsh_path=paths.epi_endo_cc_base,
+                    ofmt=output_ext,
+                    ifmt="vtk"
                 )
 
-            # Keep only 3 largest components
-            cc_names = keep_largest_n_components(cc_names, paths.tmp_dir, n=3)
+            cc_parts = mshu.find_numbered_parts(
+                directory=paths.tmp_dir,
+                base_prefix=paths.epi_endo_cc_base.name
+            )
+            
+            EXPECTED_CC_COUNT = 3
+            if len(cc_parts) < EXPECTED_CC_COUNT:
+                raise SurfaceIdentificationError(
+                    f"Expected {EXPECTED_CC_COUNT} connected components, found {len(cc_parts)}"
+                )
+
+            cc_parts = mshu.keep_largest_n_components(
+                component_names=cc_parts,
+                directory=paths.tmp_dir,
+                keep_n=EXPECTED_CC_COUNT,
+                delete_smaller=True
+            )
 
             # Step 4: Identify which surface is which
             surfaces_data = []
-            for cc_name in cc_names:
+            for cc_name in cc_parts:
                 cc_path = paths.tmp_dir / cc_name
-                pts, surf = read_carp_mesh(cc_path, elem_type="Tr", read_tags=False)
-                cog = compute_surface_center_of_gravity(pts)
+                pts, surf = mshu.read_carp_mesh(cc_path, elem_type="Tr", read_tags=False)
+                cog = geom.compute_surface_center_of_gravity(pts)
                 surfaces_data.append(
                     {"name": cc_name, "pts": pts, "surf": surf, "cog": cog}
                 )
 
             # Step 5: Get LV blood pool center for distance calculations
-            mesh_pts, mesh_elem = read_carp_mesh(
-                paths.mesh, elem_type="Tt", read_tags=True
-            )
+            mesh_pts, mesh_elem = mshu.read_carp_mesh( paths.mesh, elem_type="Tt", read_tags=True )
 
             lv_tag = tags.get_tags_list(["LV"])[0]
-            lv_cog = compute_mesh_region_cog(mesh_pts, mesh_elem, lv_tag)
+            lv_cog = geom.compute_mesh_region_cog(mesh_pts, mesh_elem, lv_tag)
 
             # Calculate distances from LV center
             for surf_data in surfaces_data:
@@ -191,7 +195,7 @@ class SurfaceLogic:
             # Step 6: Identify epicardium by outward-pointing normals
             epi_found = False
             for i, surf_data in enumerate(surfaces_data):
-                outward_fraction = identify_surface_orientation(
+                outward_fraction = geom.identify_surface_orientation(
                     surf_data["pts"], surf_data["surf"], lv_cog
                 )
 
@@ -214,9 +218,9 @@ class SurfaceLogic:
                         rv_endo_idx = endo_indices[0]
 
                     self.logger.info(
-                        f"Identified: EPI={cc_names[epi_idx]}, "
-                        f"LV_ENDO={cc_names[lv_endo_idx]}, "
-                        f"RV_ENDO={cc_names[rv_endo_idx]}"
+                        f"Identified: EPI={cc_parts[epi_idx]}, "
+                        f"LV_ENDO={cc_parts[lv_endo_idx]}, "
+                        f"RV_ENDO={cc_parts[rv_endo_idx]}"
                     )
                     break
 
@@ -227,17 +231,17 @@ class SurfaceLogic:
 
             # Step 7: Rename files to final output paths
             self._rename_surface_files(
-                paths.tmp_dir / cc_names[epi_idx],
+                paths.tmp_dir / cc_parts[epi_idx],
                 paths.epi_surface,
                 formats=["pts", "elem", "lon", "nod", "eidx"],
             )
             self._rename_surface_files(
-                paths.tmp_dir / cc_names[lv_endo_idx],
+                paths.tmp_dir / cc_parts[lv_endo_idx],
                 paths.lv_endo_surface,
                 formats=["pts", "elem", "lon", "nod", "eidx"],
             )
             self._rename_surface_files(
-                paths.tmp_dir / cc_names[rv_endo_idx],
+                paths.tmp_dir / cc_parts[rv_endo_idx],
                 paths.rv_endo_surface,
                 formats=["pts", "elem", "lon", "nod", "eidx"],
             )
@@ -285,25 +289,32 @@ class SurfaceLogic:
             )
 
             # Extract connected components
-            # TODO: Add extract_unreachable to MeshtoolWrapper
-            # self.meshtool.extract_unreachable(...)
+            self.logger.info("Extracting connected components")
+
+            for output_ext in ["vtk", "carp_txt"]:
+                self.meshtool.extract_unreachable(
+                    input_mesh_path=paths.epi_endo_combined.with_suffix(".surfmesh"),
+                    submsh_path=paths.epi_endo_cc_base,
+                    ofmt=output_ext,
+                    ifmt="vtk"
+                )
 
             # Find connected components
-            cc_names = find_connected_components(paths.septum_cc_base, paths.tmp_dir)
+            cc_parts = mshu.find_numbered_parts(paths.septum_cc_base, paths.tmp_dir)
 
             # Keep 2 largest (LV epi and septum)
-            cc_names = keep_largest_n_components(cc_names, paths.tmp_dir, n=2)
+            cc_parts = mshu.keep_largest_n_components(cc_parts, paths.tmp_dir, keep_n=2)
 
             self.logger.info("Renaming septum connected components")
 
             # First is LV epi (intermediate), second is actual septum
             self._rename_surface_files(
-                paths.tmp_dir / cc_names[0],
+                paths.tmp_dir / cc_parts[0],
                 paths.lv_epi_intermediate,
                 formats=["pts", "elem", "lon", "nod", "eidx"],
             )
             self._rename_surface_files(
-                paths.tmp_dir / cc_names[1],
+                paths.tmp_dir / cc_parts[1],
                 paths.septum_surface,
                 formats=["pts", "elem", "lon", "nod", "eidx"],
             )
@@ -316,96 +327,176 @@ class SurfaceLogic:
             raise SurfaceExtractionError(msg) from e
 
     def map_ventricular_surfaces(
-        self, paths: VentricularSurfacePaths, files_to_map: List[Path]
+        self,
+        paths: VentricularSurfacePaths
     ) -> None:
         """
-        Map data files onto ventricular surfaces.
+        Map connected component indices to create final surface files.
+
+        This takes the connected component `.eidx` and `.nod` files and uses them
+        to extract subsurfaces from the original combined surfaces, creating both
+        .surf and .vtx files for each surface.
 
         Args:
             paths: Ventricular surface paths contract
-            files_to_map: List of data files to map
 
         Raises:
             SurfaceExtractionError: If mapping fails
         """
         try:
-            self.logger.info(f"Mapping {len(files_to_map)} files to surfaces")
+            self.logger.info("Mapping connected components to final surfaces")
 
-            files_str = [str(f) for f in files_to_map]
+            # Define the mapping operations
+            # Each tuple is: (eidx_base_name, original_surface_name, output_base_name)
+            mapping_operations = [
+                # Epi, LV endo, RV endo all come from epi_endo combined surface
+                (
+                    paths.epi_surface.stem,  # "myocardium.epi" eidx/nod
+                    paths.epi_endo_combined.with_suffix(".surfmesh.surf"),
+                    paths.epi_surface.stem
+                ),
+                (
+                    paths.lv_endo_surface.stem,  # "myocardium.lvendo" eidx/nod
+                    paths.epi_endo_combined.with_suffix(".surfmesh.surf"),
+                    paths.lv_endo_surface.stem
+                ),
+                (
+                    paths.rv_endo_surface.stem,  # "myocardium.rvendo" eidx/nod
+                    paths.epi_endo_combined.with_suffix(".surfmesh.surf"),
+                    paths.rv_endo_surface.stem
+                ),
+                # LV epi intermediate and septum come from septum extraction
+                (
+                    paths.lv_epi_intermediate.stem,  # "lvepi" eidx/nod
+                    paths.septum_raw.with_suffix(".surfmesh.surf"),
+                    paths.lv_epi_intermediate.stem
+                ),
+                (
+                    paths.septum_surface.stem,  # "myocardium.rvsept" eidx/nod
+                    paths.septum_raw.with_suffix(".surfmesh.surf"),
+                    paths.septum_surface.stem
+                ),
+            ]
 
-            self.meshtool.map(
-                submesh_path=paths.mesh,
-                files_list=files_str,
-                output_folder=paths.output_dir,
-                mode="m2s",
+            # Execute each mapping operation
+            for eidx_base, orig_surf, output_base in mapping_operations:
+                eidx_path = paths.tmp_dir / eidx_base
+                original_surface = paths.tmp_dir / orig_surf.name
+                output_path = paths.tmp_dir / output_base
+
+                self.logger.debug(
+                    f"Mapping {eidx_base} from {orig_surf.name} -> {output_base}"
+                )
+
+                mshu.connected_component_to_surface(
+                    eidx_file=eidx_path,
+                    original_surface=original_surface,
+                    output_surface=output_path
+                )
+
+            mshu.surf2vtk(
+                mesh_base_path=paths.mesh.stem, 
+                surface_path=paths.epi_surface.stem,
+                output_vtk_path=paths.epi_surface.with_suffix(".vtk")
             )
-
             self.logger.info("Surface mapping completed")
 
         except Exception as e:
-            msg = f"Failed to map surfaces: {e}"
+            msg = f"Failed to map ventricular surfaces: {e}"
             self.logger.error(msg)
             raise SurfaceExtractionError(msg) from e
 
-    def remove_septum_from_lv_endo(self, paths: VentricularSurfacePaths) -> None:
+    def remove_septum_from_rv_endo(self, paths: VentricularSurfacePaths) -> None:
         """
-        Remove septum region from LV endocardium surface.
+        Removes the septum from the RV endocardial surface to isolate the free wall.
+
+        This process overwrites the existing RV endo surface file with the new
+        free wall surface and generates the corresponding .vtx and .vtk files.
 
         Args:
-            paths: Ventricular surface paths contract
+            paths: The data contract with all required ventricular surface paths.
 
         Raises:
-            SurfaceExtractionError: If removal fails
+            SurfaceExtractionError: If the removal process fails.
         """
         try:
-            self.logger.info("Removing septum from LV endocardium")
+            self.logger.info("Removing septum from RV endocardium.")
 
-            remove_septum_from_endo(
-                lv_endo_path=paths.lv_endo_surface,
-                septum_path=paths.septum_surface,
-                output_path=paths.lv_endo_surface,  # Overwrite
+            # Step 1: Create the new free wall surface by removing septal triangles.
+            # The output_path overwrites the original rv_endo_surface.
+            mshu.remove_septum_from_endo(
+                endo_surface_path=paths.rv_endo_surface,
+                septum_surface_path=paths.septum_surface,
+                output_path=paths.rv_endo_surface,
             )
+            self.logger.info(f"Generated new free wall surface: {paths.rv_endo_surface.name}")
 
-            self.logger.info("Septum removed from LV endo")
+            # Step 2: Generate the corresponding .vtx file for the new surface.
+            # Read the surface we just created to get its vertex list.
+            freewall_surf = mshu.read_surf(paths.rv_endo_surface)
+            freewall_vtx = mshu.surf2vtx(freewall_surf)
+            mshu.write_vtx(freewall_vtx, paths.rv_endo_vtx)
+            self.logger.info(f"Generated corresponding vtx file: {paths.rv_endo_vtx.name}")
 
-        except Exception as e:
-            msg = f"Failed to remove septum: {e}"
+            # Step 3: Generate a .vtk file for visualization/debugging.
+            # This is not a final artifact, so it goes in the temporary directory.
+            debug_vtk_path = paths.tmp_dir / paths.rv_endo_surface.with_suffix(".vtk").name
+            mshu.surf2vtk(
+                mesh_base_path=paths.mesh,
+                surface_path=paths.rv_endo_surface,
+                output_vtk_path=debug_vtk_path
+            )
+            self.logger.info(f"Generated debug VTK file: {debug_vtk_path.name}")
+
+        except FileNotFoundError as e:
+            msg = f"A required surface file was not found during septum removal: {e}"
             self.logger.error(msg)
+            raise SurfaceExtractionError(msg) from e
+        except Exception as e:
+            msg = f"An unexpected error occurred during septum removal: {e}"
+            self.logger.error(msg, exc_info=True) # exc_info=True logs the traceback
             raise SurfaceExtractionError(msg) from e
 
     def prepare_ventricular_vtx_files(self, paths: VentricularSurfacePaths) -> None:
-        """
-        Prepare VTX files required for UVC computation on ventricles.
-
-        Args:
-            paths: Ventricular surface paths contract
-
-        Raises:
-            SurfaceExtractionError: If preparation fails
-        """
-        try:
-            self.logger.info("Preparing VTX files for UVC")
-
-            vtx_mapping = {
-                "base": paths.base_vtx,
-                "epi": paths.epi_vtx,
-                "lv_endo": paths.lv_endo_vtx,
-                "rv_endo": paths.rv_endo_vtx,
-                "septum": paths.septum_vtx,
-                "apex": paths.apex_vtx,
-                "rv_sept_pt": paths.rv_septum_point_vtx,
-            }
-
-            prepare_vtx_files_for_uvc(
-                surface_dir=paths.output_dir, output_vtx_paths=vtx_mapping
-            )
-
-            self.logger.info("VTX files prepared")
-
-        except Exception as e:
-            msg = f"Failed to prepare VTX files: {e}"
-            self.logger.error(msg)
-            raise SurfaceExtractionError(msg) from e
+            """
+            Generates .vtx files from their corresponding .surf files for UVC.
+    
+            Args:
+                paths: The data contract containing all required ventricular surface paths.
+    
+            Raises:
+                SurfaceExtractionError: If any VTX file generation fails.
+            """
+            self.logger.info("Preparing VTX files from surfaces for UVC.")
+    
+            # A list of (source_surface, destination_vtx) pairs.
+            # This is explicit and easy to modify.
+            surface_to_vtx_map = [
+                (paths.epi_surface, paths.epi_vtx),
+                (paths.lv_endo_surface, paths.lv_endo_vtx),
+                (paths.rv_endo_surface, paths.rv_endo_vtx),
+                (paths.septum_surface, paths.septum_vtx),
+                # The 'base' surface is also required per the old contract.
+                (paths.base_surface, paths.base_vtx),
+            ]
+    
+            try:
+                for surf_path, vtx_path in surface_to_vtx_map:
+                    if not surf_path.is_file():
+                        # Raise an error if an input is missing, as this is a logic error.
+                        raise FileNotFoundError(f"Required input surface does not exist: {surf_path}")
+                    
+                    mshu.generate_vtx_from_surf(
+                        input_surf_path=surf_path,
+                        output_vtx_path=vtx_path
+                    )
+    
+                self.logger.info("Successfully generated all required VTX files.")
+    
+            except Exception as e:
+                msg = f"Failed to prepare VTX files: {e}"
+                self.logger.error(msg, exc_info=True)
+                raise SurfaceExtractionError(msg) from e
 
     # ATRIAL SURFACE EXTRACTION
 

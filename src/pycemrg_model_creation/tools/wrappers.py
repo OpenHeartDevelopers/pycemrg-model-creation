@@ -336,6 +336,27 @@ class MeshtoolWrapper:
             f"Successfully extracted surface to {output_surface_path}.surfmesh.*"
         )
 
+    def extract_unreachable(
+        self, 
+        input_mesh_path: Path, 
+        submsh_path: Path, 
+        ofmt: str = 'vtk', 
+        ifmt: str = '',
+    ) -> None: 
+        self.logger.info(f"Extracting unreachable components from {input_mesh_path.name}")
+        cmd: List[Union[str, Path]] = [
+            "meshtool", "extract", "unreachable",
+            f"-msh={input_mesh_path}"
+        ]
+        if ifmt:
+            cmd.append(f"-ifmt={ifmt}")
+        
+        cmd.append(f"-ofmt={ofmt}")
+        cmd.append(f"-submsh={submsh_path}")
+
+        self.runner.run(cmd)  # TODO: find expected outputs and include here
+        self.logger.info(f"Successfully extracted unreachable components to {submsh_path}")
+
     def convert(
         self,
         input_mesh_path: Path,
