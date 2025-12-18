@@ -15,6 +15,8 @@ from typing import List, Optional
 
 import numpy as np
 
+from pycemrg.data.labels import LabelManager
+
 from pycemrg_model_creation.config import TagsConfig 
 from pycemrg_model_creation.logic.contracts import VentricularSurfacePaths, AtrialSurfacePaths, BiVMeshPaths, AtrialMeshPaths, UVCSurfaceExtractionPaths
 from pycemrg_model_creation.tools import CarpWrapper, MeshtoolWrapper 
@@ -49,7 +51,7 @@ class SurfaceLogic:
         logic.run_ventricular_extraction(paths, tags)
     """
 
-    def __init__(self, meshtool: MeshtoolWrapper):
+    def __init__(self, meshtool: MeshtoolWrapper, label_manager: LabelManager):
         """
         Initialize SurfaceLogic with a meshtool wrapper.
 
@@ -57,12 +59,11 @@ class SurfaceLogic:
             meshtool: MeshtoolWrapper instance for executing meshtool commands
         """
         self.meshtool = meshtool
+        self.labels = label_manager
         self.logger = logging.getLogger(__name__)
 
     # VENTRICULAR SURFACE EXTRACTION
-    def extract_ventricular_base( 
-        self, paths: VentricularSurfacePaths, tags: TagsConfig
-    ) -> None:
+    def extract_ventricular_base( self, paths: VentricularSurfacePaths) -> None:
         """
         Extract the base surface for ventricles.
 
@@ -80,14 +81,11 @@ class SurfaceLogic:
             self.logger.info("Extracting ventricular base surface")
 
             # Get tags for ventricles (LV, RV) and valve planes (MV, TV, AV, PV)
-            vent_tags = tags.get_tags_string(["LV", "RV"])
-            valve_tags_keys = ["MV", "TV", "AV", "PV"]
-            if tags.PArt is not None:
-                valve_tags_keys.append("PArt")
-            valve_tags = tags.get_tags_string(valve_tags_keys)
+            ventricle_tags = self.labels.get_tags_string([["LV", "RV"]])
+            valve_tags = self.labels.get_tags_string([["MV","TV","AV","PV"]])
 
             # Extract surface where ventricles meet valves
-            op_tag = f"{vent_tags}:{valve_tags}"
+            op_tag = f"{ventricle_tags}:{valve_tags}"
 
             self.meshtool.extract_surface(
                 input_mesh_path=paths.mesh,
@@ -103,9 +101,7 @@ class SurfaceLogic:
             self.logger.error(msg)
             raise SurfaceExtractionError(msg) from e
 
-    def extract_ventricular_surfaces(
-        self, paths: VentricularSurfacePaths, tags: TagsConfig
-    ) -> None:
+    def extract_ventricular_surfaces(self, paths: VentricularSurfacePaths) -> None:
         """
         Extract and identify epicardium, LV endocardium, and RV endocardium.
 
@@ -127,14 +123,11 @@ class SurfaceLogic:
             self.logger.info("Extracting ventricular surfaces (epi, LV endo, RV endo)")
 
             # Step 1: Extract combined epi/endo surface
-            vent_tags = tags.get_tags_string(["LV", "RV"])
-            valve_tags_keys = ["MV", "TV", "AV", "PV"]
-            if tags.PArt is not None:
-                valve_tags_keys.append("PArt")
-            valve_tags = tags.get_tags_string(valve_tags_keys)
+            ventricle_tags = self.labels.get_tags_string(["LV", "RV"])
+            valve_tags = self.labels.get_tags_string(["MV", "TV", "AV", "PV"])
 
             # Surface excluding valve openings
-            op_tag = f"{vent_tags}-{valve_tags}"
+            op_tag = f"{ventricle_tags}-{valve_tags}"
 
             self.meshtool.extract_surface(
                 input_mesh_path=paths.mesh,
@@ -185,7 +178,7 @@ class SurfaceLogic:
             # Step 5: Get LV blood pool center for distance calculations
             mesh_pts, mesh_elem = mshu.read_carp_mesh( paths.mesh, elem_type="Tt", read_tags=True )
 
-            lv_tag = tags.get_tags_list(["LV"])[0]
+            lv_tag = self.labels.get_values_from_names(["LV"])[0]
             lv_cog = geom.compute_mesh_region_cog(mesh_pts, mesh_elem, lv_tag)
 
             # Calculate distances from LV center
@@ -255,7 +248,7 @@ class SurfaceLogic:
             self.logger.error(msg)
             raise SurfaceExtractionError(msg) from e
 
-    def extract_septum(self, paths: VentricularSurfacePaths, tags: TagsConfig) -> None:
+    def extract_septum(self, paths: VentricularSurfacePaths) -> None:
         """
         Extract the interventricular septum surface.
 
@@ -273,11 +266,8 @@ class SurfaceLogic:
             self.logger.info("Extracting septum surface")
 
             # Extract LV surface, excluding RV, RA, and pulmonary artery
-            lv_tags = tags.get_tags_string(["LV"])
-            exclude_tags_keys = ["RV", "RA"]
-            if tags.PArt is not None:
-                exclude_tags_keys.append("PArt")
-            exclude_tags = tags.get_tags_string(exclude_tags_keys)
+            lv_tags = self.labels.get_tags_string(["LV"])
+            exclude_tags = self.labels.get_tags_string(["RV", "RA"])
 
             op_tag = f"{lv_tags}-{exclude_tags}"
 
@@ -326,10 +316,7 @@ class SurfaceLogic:
             self.logger.error(msg)
             raise SurfaceExtractionError(msg) from e
 
-    def map_ventricular_surfaces(
-        self,
-        paths: VentricularSurfacePaths
-    ) -> None:
+    def map_ventricular_surfaces( self, paths: VentricularSurfacePaths ) -> None:
         """
         Map connected component indices to create final surface files.
 
@@ -460,15 +447,15 @@ class SurfaceLogic:
     def prepare_ventricular_vtx_files(self, paths: VentricularSurfacePaths) -> None:
             """
             Generates .vtx files from their corresponding .surf files for UVC.
-    
+
             Args:
                 paths: The data contract containing all required ventricular surface paths.
-    
+
             Raises:
                 SurfaceExtractionError: If any VTX file generation fails.
             """
             self.logger.info("Preparing VTX files from surfaces for UVC.")
-    
+
             # A list of (source_surface, destination_vtx) pairs.
             # This is explicit and easy to modify.
             surface_to_vtx_map = [
@@ -479,30 +466,46 @@ class SurfaceLogic:
                 # The 'base' surface is also required per the old contract.
                 (paths.base_surface, paths.base_vtx),
             ]
-    
+
             try:
                 for surf_path, vtx_path in surface_to_vtx_map:
                     if not surf_path.is_file():
                         # Raise an error if an input is missing, as this is a logic error.
                         raise FileNotFoundError(f"Required input surface does not exist: {surf_path}")
-                    
+
                     mshu.generate_vtx_from_surf(
                         input_surf_path=surf_path,
                         output_vtx_path=vtx_path
                     )
-    
+
                 self.logger.info("Successfully generated all required VTX files.")
-    
+
             except Exception as e:
                 msg = f"Failed to prepare VTX files: {e}"
                 self.logger.error(msg, exc_info=True)
                 raise SurfaceExtractionError(msg) from e
 
     # ATRIAL SURFACE EXTRACTION
+    def _get_atrial_valve_tags_string(self, chamber: Chamber) -> str:
+        """
+        Gets a comma-separated string of valve tags associated with an atrium.
 
-    def extract_atrial_base(
-        self, paths: AtrialSurfacePaths, tags: TagsConfig, chamber: Chamber
-    ) -> None:
+        Args:
+            chamber: The atrial chamber (LA or RA).
+
+        Returns:
+            A string of tag numbers for the relevant valves (e.g., "7,9").
+        """
+        match chamber:
+            case Chamber.LA:
+                return self.labels.get_tags_string(["MV", "AV"])
+            case Chamber.RA:
+                return self.labels.get_tags_string(["TV", "PV"])
+            case _:
+                # This helps catch logic errors if a non-atrial chamber is passed
+                raise ValueError(f"No valve association defined for chamber: {chamber.name}")
+            
+    def extract_atrial_base(self, paths: AtrialSurfacePaths, chamber: Chamber) -> None:
         """
         Extract the base surface for an atrium (LA or RA).
 
@@ -518,15 +521,8 @@ class SurfaceLogic:
             self.logger.info(f"Extracting {chamber.value} base surface")
 
             # Get atrial tag and valve tags
-            atrial_tags = tags.get_tags_string([chamber.value])
-
-            if chamber == Chamber.LA:
-                valve_tags = tags.get_tags_string(["MV", "AV"])
-            else:  # RA
-                valve_tags_keys = ["TV", "PV"]
-                if tags.PArt is not None:
-                    valve_tags_keys.append("PArt")
-                valve_tags = tags.get_tags_string(valve_tags_keys)
+            atrial_tags = self.labels.get_tags_string([chamber.value])
+            valve_tags = self._get_atrial_valve_tags_string(chamber)
 
             op_tag = f"{atrial_tags}:{valve_tags}"
 
@@ -544,9 +540,7 @@ class SurfaceLogic:
             self.logger.error(msg)
             raise SurfaceExtractionError(msg) from e
 
-    def extract_atrial_surfaces(
-        self, paths: AtrialSurfacePaths, tags: TagsConfig, chamber: Chamber
-    ) -> None:
+    def extract_atrial_surfaces(self, paths: AtrialSurfacePaths, chamber: Chamber) -> None:
         """
         Extract epicardium and endocardium for an atrium.
 
@@ -562,16 +556,8 @@ class SurfaceLogic:
             self.logger.info(f"Extracting {chamber.value} epi and endo surfaces")
 
             # Get atrial tag
-            atrial_tags = tags.get_tags_string([chamber.value])
-
-            # Determine valve tags to exclude
-            if chamber == Chamber.LA:
-                valve_tags = tags.get_tags_string(["MV", "AV"])
-            else:  # RA
-                valve_tags_keys = ["TV", "PV"]
-                if tags.PArt is not None:
-                    valve_tags_keys.append("PArt")
-                valve_tags = tags.get_tags_string(valve_tags_keys)
+            atrial_tags = self.labels.get_tags_string([chamber.value])
+            valve_tags = self._get_atrial_valve_tags_string(chamber)
 
             op_tag = f"{atrial_tags}-{valve_tags}"
 
@@ -592,9 +578,7 @@ class SurfaceLogic:
             self.logger.error(msg)
             raise SurfaceExtractionError(msg) from e
 
-    def map_atrial_surfaces(
-        self, paths: AtrialSurfacePaths, files_to_map: List[Path], chamber: Chamber
-    ) -> None:
+    def map_atrial_surfaces(self, paths: AtrialSurfacePaths, files_to_map: List[Path], chamber: Chamber) -> None:
         """
         Map data files onto atrial surfaces.
 
@@ -771,7 +755,6 @@ class SurfaceLogic:
     def run_ventricular_extraction(
         self,
         paths: VentricularSurfacePaths,
-        tags: TagsConfig,
         files_to_map: Optional[List[Path]] = None,
     ) -> None:
         """
@@ -798,14 +781,14 @@ class SurfaceLogic:
         self.logger.info("STARTING VENTRICULAR SURFACE EXTRACTION WORKFLOW")
         self.logger.info("=" * 60)
 
-        self.extract_ventricular_base(paths, tags)
-        self.extract_ventricular_surfaces(paths, tags)
-        self.extract_septum(paths, tags)
+        self.extract_ventricular_base(paths)
+        self.extract_ventricular_surfaces(paths)
+        self.extract_septum(paths)
 
         if files_to_map:
             self.map_ventricular_surfaces(paths, files_to_map)
 
-        self.remove_septum_from_lv_endo(paths)
+        self.remove_septum_from_rv_endo(paths)
         self.prepare_ventricular_vtx_files(paths)
 
         self.logger.info("=" * 60)
@@ -815,7 +798,6 @@ class SurfaceLogic:
     def run_atrial_extraction(
         self,
         paths: AtrialSurfacePaths,
-        tags: TagsConfig,
         chamber: Chamber,
         files_to_map: Optional[List[Path]] = None,
     ) -> None:
@@ -835,8 +817,8 @@ class SurfaceLogic:
         self.logger.info(f"STARTING {chamber.value} SURFACE EXTRACTION WORKFLOW")
         self.logger.info("=" * 60)
 
-        self.extract_atrial_base(paths, tags, chamber)
-        self.extract_atrial_surfaces(paths, tags, chamber)
+        self.extract_atrial_base(paths, chamber)
+        self.extract_atrial_surfaces(paths, chamber)
 
         if files_to_map:
             self.map_atrial_surfaces(paths, files_to_map, chamber)

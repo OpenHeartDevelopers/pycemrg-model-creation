@@ -21,7 +21,8 @@ class TagsConfig:
     TV: Union[int, List[int]]  # Tricuspid valve
     AV: Union[int, List[int]]  # Aortic valve
     PV: Union[int, List[int]]  # Pulmonary valve
-    PArt: Optional[Union[int, List[int]]] = None  # Pulmonary artery
+    PArt: Union[int, List[int]]  # Pulmonary artery
+
 
     @classmethod
     def from_dict(cls, tags_dict: Dict[str, Union[int, List[int]]]) -> "TagsConfig":

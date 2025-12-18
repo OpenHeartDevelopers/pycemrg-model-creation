@@ -18,15 +18,16 @@ classifiers = [
     "Operating System :: OS Independent",
 ]
 
-# CRITICAL: This project depends on our other library, pycemrg.
-# We specify a minimum version to ensure compatibility.
 dependencies = [
-    "pycemrg>=0.1.0"
+    "pycemrg>=0.1.0",
+    "numpy>=1.21",
+    "pyvista>=0.38",
+    "pyyaml>=6.0", # <-- Keep this declaration
 ]
 
 [project.urls]
-Homepage = "https://github.com/OpenHeartDevelopers/pycemrg-model-creation"
-"Bug Tracker" = "https://github.com/OpenHeartDevelopers/pycemrg-model-creation/issues"
+Homepage = "https://github.com/OpenHeartDevelopers/pycemrg-model-creation" # not set up yet
+"Bug Tracker" = "https://github.com/OpenHeartDevelopers/pycemrg-model-creation/issues" # not set up yet
 
 [tool.setuptools.packages.find]
 where = ["src"]

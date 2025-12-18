@@ -429,3 +429,59 @@ def generate_vtx_from_surf(input_surf_path: Path, output_vtx_path: Path) -> None
     except Exception as e:
         logger.error(f"Failed to generate VTX from {input_surf_path.name}: {e}")
         raise
+
+def identify_epi_from_endo(
+    component1_base_path: Path,
+    component2_base_path: Path,
+) -> Tuple[Path, Path]:
+    """
+    Identifies epicardial and endocardial surfaces from two mesh components.
+
+    The method assumes the epicardium is the outer surface. It calculates the
+    surface normals for one component and checks their orientation relative to the
+    component's center of gravity (CoG). If the majority of normals point inward
+    (towards the CoG), it is classified as the epicardium.
+
+    Args:
+        component1_base_path: The base path to the first connected component
+                              (e.g., '.../tmp/epi_endo_CC.part0').
+        component2_base_path: The base path to the second connected component.
+
+    Returns:
+        A tuple of (epicardium_base_path, endocardium_base_path).
+    """
+    logger.info(f"Identifying epi/endo between {component1_base_path.name} "
+                f"and {component2_base_path.name}")
+
+    # Analyze the first component to determine its identity
+    points = read_pts(component1_base_path.with_suffix(".pts"))
+    cells = read_elem(component1_base_path.with_suffix(".elem"), elem_type=ElemType.Tr)
+
+    center_of_gravity = np.mean(points, axis=0)
+
+    # --- Vectorized Normal Calculation ---
+    v0 = points[cells[:, 1]] - points[cells[:, 0]]
+    v1 = points[cells[:, 2]] - points[cells[:, 0]]
+    normals = np.cross(v0, v1)
+    
+    # Normalize the normal vectors to unit length
+    norms_magnitude = np.linalg.norm(normals, axis=1, keepdims=True)
+    normals_normalized = np.divide(normals, norms_magnitude, where=norms_magnitude != 0)
+
+    # Vector from a vertex on each triangle to the center of gravity
+    vertex_to_cog = center_of_gravity - points[cells[:, 0]]
+
+    # Dot product for all triangles at once. A positive dot product means the
+    # normal and the vector to the CoG are in the same general direction
+    # (i.e., the normal points inward), which is characteristic of an outer surface.
+    dot_products = np.sum(normals_normalized * vertex_to_cog, axis=1)
+    
+    inward_pointing_ratio = np.mean(dot_products > 0)
+    
+    # The original code used a 0.7 threshold, but >0.5 is sufficient
+    if inward_pointing_ratio > 0.5:
+        logger.info(f"'{component1_base_path.name}' identified as Epicardium.")
+        return component1_base_path, component2_base_path
+    else:
+        logger.info(f"'{component1_base_path.name}' identified as Endocardium.")
+        return component2_base_path, component1_base_path
