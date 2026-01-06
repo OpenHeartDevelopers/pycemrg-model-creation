@@ -195,7 +195,7 @@ def connected_component_to_surface(
 ) -> None:
 	eidx = np.fromfile(eidx_path.with_suffix(".eidx"), dtype=int, count=-1)
 	nod = np.fromfile(eidx_path.with_suffix(".nod"), dtype=int, count=-1)
-	surf = np.loadtxt(input_surface_path,dtype=int,skiprows=1,usecols=[1,2,3])
+	surf = read_surf(input_surface_path)
 	vtx = surf2vtx(surf)
 
 	subsurf = surf[eidx,:]
