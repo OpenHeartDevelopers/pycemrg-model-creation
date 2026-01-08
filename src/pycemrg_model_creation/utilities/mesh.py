@@ -12,6 +12,9 @@ from enum import Enum
 logger = logging.getLogger(__name__)
 
 
+CARP_COMMON_EXTENSIONS = [".pts", ".elem", ".lon", ".nod", ".eidx", ".vtk"]
+
+
 class ElemType(Enum):
     """
     Defined CARP element types and their corresponding column indices for connectivity.
@@ -21,6 +24,7 @@ class ElemType(Enum):
     Tt = (1, 2, 3, 4)  # Tetrahedra
     Tr = (1, 2, 3)  # Triangles
     Ln = (1, 2)  # Lines
+
 
 # READING FUNCTIONS
 def read_carp_mesh(
@@ -39,10 +43,17 @@ def read_carp_mesh(
         and optionally tags
 
     """
+    # Validating we didn't receive a path with CARP extensions
+    if mesh_base_path.suffix in CARP_COMMON_EXTENSIONS:
+        raise ValueError(
+            f"mesh_base_path should not include CARP file extensions. "
+            f"Got {mesh_base_path}, expected base path without extensions."
+        )
+
     logger.info(f"Reading CARP mesh from base: {mesh_base_path}")
 
-    pts_path = mesh_base_path.with_suffix(".pts")
-    elem_path = mesh_base_path.with_suffix(".elem")
+    pts_path = mesh_base_path.parent / f"{mesh_base_path}.pts"
+    elem_path = mesh_base_path.parent / f"{mesh_base_path}.elem"
 
     if not pts_path.exists() or not elem_path.exists():
         raise FileNotFoundError(
@@ -111,6 +122,7 @@ def read_lon(lon_path: Path) -> np.ndarray:
     logger.info(f"Reading lon file {lon_path.name}")
     return np.loadtxt(lon_path, dtype=float, skiprows=1)
 
+
 def read_surf(surface_path: Path) -> np.ndarray:
     """
     Reads a CARP .surf file, returning only the triangle connectivity.
@@ -123,12 +135,17 @@ def read_surf(surface_path: Path) -> np.ndarray:
     """
     logger.info(f"Reading surface connectivity from {surface_path.name}")
     # The .surf file format is "Tr vtx1 vtx2 vtx3". We skip the "Tr" column.
-    return np.loadtxt(surface_path, dtype=int, skiprows=1, usecols=[1, 2, 3])
+    return np.loadtxt(
+        surface_path.with_suffix(".surf"), dtype=int, skiprows=1, usecols=[1, 2, 3]
+    )
 
 
 # WRITING FUNCTIONS
 
-def write_surf(surface_cells: NDArray[np.int_], output_path: Path) -> None: # refactor note: use for write_surface
+
+def write_surf(
+    surface_cells: NDArray[np.int_], output_path: Path
+) -> None:  # refactor note: use for write_surface
     """
     Writes a surface connectivity array to a CARP .surf file.
 
@@ -136,13 +153,17 @@ def write_surf(surface_cells: NDArray[np.int_], output_path: Path) -> None: # re
         surface_cells: A NumPy array of shape (n_triangles, 3) with vertex indices.
         output_path: Path to the output .surf file.
     """
-    assert surface_cells.ndim == 2 and surface_cells.shape[1] == 3, \
+    assert surface_cells.ndim == 2 and surface_cells.shape[1] == 3, (
         "Input array must be of shape (n, 3)."
+    )
 
     header = str(surface_cells.shape[0])
     # The format string 'Tr %d %d %d' prepends 'Tr' to each line of integer data.
-    np.savetxt( output_path, surface_cells, fmt='Tr %d %d %d', header=header, comments='' )
+    np.savetxt(
+        output_path, surface_cells, fmt="Tr %d %d %d", header=header, comments=""
+    )
     logger.info(f"Successfully wrote surface to {output_path}")
+
 
 def write_vtx(vertex_indices: NDArray[np.int_], output_path: Path) -> None:
     """
@@ -156,11 +177,13 @@ def write_vtx(vertex_indices: NDArray[np.int_], output_path: Path) -> None:
 
     # The header for a .vtx file includes the count and the 'intra' keyword.
     header = f"{vertex_indices.shape[0]}\nintra"
-    np.savetxt( output_path, vertex_indices, fmt='%d', header=header, comments=''  )
+    np.savetxt(output_path, vertex_indices, fmt="%d", header=header, comments="")
     logger.info(f"Successfully wrote vertices to {output_path}")
 
 
-def write_pts(points: NDArray[np.float64], output_path: Path) -> None: # refactor note: use for write_pnts 
+def write_pts(
+    points: NDArray[np.float64], output_path: Path
+) -> None:  # refactor note: use for write_pnts
     """
     Writes a points coordinate array to a CARP .pts file.
 
@@ -168,14 +191,18 @@ def write_pts(points: NDArray[np.float64], output_path: Path) -> None: # refacto
         points: A NumPy array of shape (n_points, 3) with vertex coordinates.
         output_path: Path to the output .pts file.
     """
-    assert points.ndim == 2 and points.shape[1] == 3, \
+    assert points.ndim == 2 and points.shape[1] == 3, (
         "Input array must be of shape (n, 3)."
+    )
 
     header = str(points.shape[0])
     # Using '%.8f' for precision, consistent with `write_dat`.
     # Using a space delimiter as it's more standard than tab.
-    np.savetxt(output_path,points,fmt='%.8f',delimiter=' ',header=header,comments='' )
+    np.savetxt(
+        output_path, points, fmt="%.8f", delimiter=" ", header=header, comments=""
+    )
     logger.info(f"Successfully wrote points to {output_path}")
+
 
 def write_dat(data: NDArray, output_path: Path) -> None:
     """
@@ -185,34 +212,31 @@ def write_dat(data: NDArray, output_path: Path) -> None:
         data: The NumPy array to save.
         output_path: The path for the output file.
     """
-    np.savetxt(output_path, data, fmt='%.8f')
+    np.savetxt(output_path, data, fmt="%.8f")
     logger.info(f"Successfully wrote data to {output_path}")
 
+
 def connected_component_to_surface(
-    eidx_path: Path,
-    input_surface_path: Path, 
-    output_surface_path: Path
+    eidx_path: Path, input_surface_path: Path, output_surface_path: Path
 ) -> None:
-	eidx = np.fromfile(eidx_path.with_suffix(".eidx"), dtype=int, count=-1)
-	nod = np.fromfile(eidx_path.with_suffix(".nod"), dtype=int, count=-1)
-	surf = read_surf(input_surface_path)
-	vtx = surf2vtx(surf)
+    eidx = np.fromfile(eidx_path.with_suffix(".eidx"), dtype=int, count=-1)
+    nod = np.fromfile(eidx_path.with_suffix(".nod"), dtype=int, count=-1)
+    surf = read_surf(input_surface_path)
+    vtx = surf2vtx(surf)
 
-	subsurf = surf[eidx,:]
-	subvtx = vtx[nod]
+    subsurf = surf[eidx, :]
+    subvtx = vtx[nod]
 
-	write_surf(subsurf,output_surface_path.with_suffix(".surf"))
-	write_vtx(subvtx,output_surface_path.with_suffix(".vtx"))
+    write_surf(subsurf, output_surface_path.with_suffix(".surf"))
+    write_vtx(subvtx, output_surface_path.with_suffix(".vtx"))
+
 
 # CONVERSION FUNCTIONS
 def surf2vtx(surf: np.ndarray) -> np.ndarray:
-	return np.unique(surf.flatten())
+    return np.unique(surf.flatten())
 
-def surf2vtk(
-    mesh_base_path: Path,
-    surface_path: Path,
-    output_vtk_path: Path
-) -> None:
+
+def surf2vtk(mesh_base_path: Path, surface_path: Path, output_vtk_path: Path) -> None:
     """
     Convert a CARP surface mesh to a VTK PolyData file.
 
@@ -236,7 +260,7 @@ def surf2vtk(
     # Create a lookup map from old vertex index to new surface-local index
     index_map = np.full(unique_vertex_indices.max() + 1, -1, dtype=int)
     index_map[unique_vertex_indices] = np.arange(len(unique_vertex_indices))
-    
+
     # Apply the map to the entire cell array in one operation
     surface_cells_reindexed = index_map[surface_cells_original]
 
@@ -252,23 +276,20 @@ def surf2vtk(
 
 
 # SURFACE OPERATIONS
-def find_numbered_parts(
-    directory: Path,
-    base_prefix: str
-) -> List[str]:
+def find_numbered_parts(directory: Path, base_prefix: str) -> List[str]:
     """
     Find all numbered part files matching a base prefix pattern.
-    
+
     Searches for files with pattern: {base_prefix}.part{N}.elem
     where N starts at 0 and increments sequentially.
-    
+
     Args:
         directory: Directory to search for part files
         base_prefix: Base prefix to match (e.g., "epi_endo_CC")
-        
+
     Returns:
         List of base names without extensions (e.g., ["epi_endo_CC.part0", "epi_endo_CC.part1"])
-        
+
     Example:
         >>> find_numbered_parts(Path("/tmp"), "mesh_CC")
         ["mesh_CC.part0", "mesh_CC.part1", "mesh_CC.part2"]
@@ -280,15 +301,13 @@ def find_numbered_parts(
     elem_file = directory / f"{part_name}.elem"
 
     while elem_file.exists():
-        
         parts.append(part_name)
         part_idx += 1
 
         part_name = f"{base_prefix}.part{part_idx}"
         elem_file = directory / f"{part_name}.elem"
-    
+
     return parts
-    
 
 
 def keep_largest_n_components(
@@ -341,7 +360,7 @@ def keep_largest_n_components(
 
     logger.info(f"Keeping the {keep_n} largest of {len(component_data)} components:")
     for i, cd in enumerate(component_data[:keep_n]):
-        logger.info(f"  {i+1}. {cd['name']} (size: {cd['size']} triangles)")
+        logger.info(f"  {i + 1}. {cd['name']} (size: {cd['size']} triangles)")
 
     if delete_smaller and components_to_delete:
         logger.info(f"Deleting {len(components_to_delete)} smaller components...")
@@ -406,6 +425,7 @@ def remove_septum_from_endo(
     # 3. Write the resulting free wall surface
     write_surf(freewall_triangles, output_path)
 
+
 # VTX UTILS
 def generate_vtx_from_surf(input_surf_path: Path, output_vtx_path: Path) -> None:
     """
@@ -418,7 +438,9 @@ def generate_vtx_from_surf(input_surf_path: Path, output_vtx_path: Path) -> None
         input_surf_path: Path to the source .surf file.
         output_vtx_path: Path for the destination .vtx file.
     """
-    logger.info(f"Generating VTX file for {input_surf_path.name} -> {output_vtx_path.name}")
+    logger.info(
+        f"Generating VTX file for {input_surf_path.name} -> {output_vtx_path.name}"
+    )
     try:
         surface_cells = read_surf(input_surf_path)
         vertex_indices = surf2vtx(surface_cells)
@@ -429,6 +451,7 @@ def generate_vtx_from_surf(input_surf_path: Path, output_vtx_path: Path) -> None
     except Exception as e:
         logger.error(f"Failed to generate VTX from {input_surf_path.name}: {e}")
         raise
+
 
 def identify_epi_from_endo(
     component1_base_path: Path,
@@ -450,8 +473,10 @@ def identify_epi_from_endo(
     Returns:
         A tuple of (epicardium_base_path, endocardium_base_path).
     """
-    logger.info(f"Identifying epi/endo between {component1_base_path.name} "
-                f"and {component2_base_path.name}")
+    logger.info(
+        f"Identifying epi/endo between {component1_base_path.name} "
+        f"and {component2_base_path.name}"
+    )
 
     # Analyze the first component to determine its identity
     points = read_pts(component1_base_path.with_suffix(".pts"))
@@ -463,7 +488,7 @@ def identify_epi_from_endo(
     v0 = points[cells[:, 1]] - points[cells[:, 0]]
     v1 = points[cells[:, 2]] - points[cells[:, 0]]
     normals = np.cross(v0, v1)
-    
+
     # Normalize the normal vectors to unit length
     norms_magnitude = np.linalg.norm(normals, axis=1, keepdims=True)
     normals_normalized = np.divide(normals, norms_magnitude, where=norms_magnitude != 0)
@@ -475,9 +500,9 @@ def identify_epi_from_endo(
     # normal and the vector to the CoG are in the same general direction
     # (i.e., the normal points inward), which is characteristic of an outer surface.
     dot_products = np.sum(normals_normalized * vertex_to_cog, axis=1)
-    
+
     inward_pointing_ratio = np.mean(dot_products > 0)
-    
+
     # The original code used a 0.7 threshold, but >0.5 is sufficient
     if inward_pointing_ratio > 0.5:
         logger.info(f"'{component1_base_path.name}' identified as Epicardium.")

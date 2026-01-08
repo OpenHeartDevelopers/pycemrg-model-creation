@@ -11,6 +11,7 @@ from .contracts import (
     UVCSurfaceExtractionPaths,
 )
 
+
 class PathContractBuilder:
     """
     A helper class to simplify the creation of path contract dataclasses.
@@ -34,20 +35,24 @@ class PathContractBuilder:
         self.biv_dir = self.root_output_dir / "BiV"
         self.la_dir = self.root_output_dir / "LA"
         self.ra_dir = self.root_output_dir / "RA"
-        
+
         # Temporary directories for intermediate files
         self.biv_tmp_dir = self.biv_dir / "tmp"
         self.la_tmp_dir = self.la_dir / "tmp"
         self.ra_tmp_dir = self.ra_dir / "tmp"
-        
+
         # Ensure all necessary directories exist upon initialization
-        for d in [self.biv_dir, self.la_dir, self.ra_dir, 
-                  self.biv_tmp_dir, self.la_tmp_dir, self.ra_tmp_dir]:
+        for d in [
+            self.biv_dir,
+            self.la_dir,
+            self.ra_dir,
+            self.biv_tmp_dir,
+            self.la_tmp_dir,
+            self.ra_tmp_dir,
+        ]:
             d.mkdir(parents=True, exist_ok=True)
 
-    def build_ventricular_paths(
-        self, mesh_base_path: Path
-    ) -> VentricularSurfacePaths:
+    def build_ventricular_paths(self, mesh_base_path: Path) -> VentricularSurfacePaths:
         """Constructs the VentricularSurfacePaths contract."""
         return VentricularSurfacePaths(
             # Input
@@ -63,10 +68,10 @@ class PathContractBuilder:
             septum_cc_base=self.biv_tmp_dir / "septum_cc",
             lv_epi_intermediate=self.biv_tmp_dir / "lv_epi_intermediate",
             # Final surfaces
-            epi_surface=self.biv_dir / "biv_epi.vtk",
-            lv_endo_surface=self.biv_dir / "biv_lvendo.vtk",
-            rv_endo_surface=self.biv_dir / "biv_rvendo.vtk",
-            septum_surface=self.biv_dir / "biv_septum.vtk",
+            epi_surface=self.biv_dir / "biv_epi",
+            lv_endo_surface=self.biv_dir / "biv_lvendo",
+            rv_endo_surface=self.biv_dir / "biv_rvendo",
+            septum_surface=self.biv_dir / "biv_septum",
             # VTX files
             base_vtx=self.biv_dir / "biv.base.vtx",
             epi_vtx=self.biv_dir / "biv.epi.vtx",
@@ -89,7 +94,7 @@ class PathContractBuilder:
         """
         if chamber_prefix.lower() not in ["la", "ra"]:
             raise ValueError("Chamber prefix must be 'la' or 'ra'.")
-        
+
         output_dir = self.la_dir if chamber_prefix.lower() == "la" else self.ra_dir
         tmp_dir = self.la_tmp_dir if chamber_prefix.lower() == "la" else self.ra_tmp_dir
 
@@ -128,8 +133,11 @@ class PathContractBuilder:
         )
 
     def build_atrial_mesh_paths(
-        self, mesh_base_path: Path, atrial_paths: AtrialSurfacePaths, 
-        blank_files_dir: Path, chamber_prefix: str
+        self,
+        mesh_base_path: Path,
+        atrial_paths: AtrialSurfacePaths,
+        blank_files_dir: Path,
+        chamber_prefix: str,
     ) -> AtrialMeshPaths:
         """Constructs the AtrialMeshPaths contract."""
         output_dir = self.la_dir if chamber_prefix.lower() == "la" else self.ra_dir
@@ -171,8 +179,12 @@ class PathContractBuilder:
         ra_paths = self.build_atrial_paths(mesh_base_path, "ra")
 
         biv_mesh_paths = self.build_biv_mesh_paths(mesh_base_path, vent_paths)
-        la_mesh_paths = self.build_atrial_mesh_paths(mesh_base_path, la_paths, blank_files_dir, "la")
-        ra_mesh_paths = self.build_atrial_mesh_paths(mesh_base_path, ra_paths, blank_files_dir, "ra")
+        la_mesh_paths = self.build_atrial_mesh_paths(
+            mesh_base_path, la_paths, blank_files_dir, "la"
+        )
+        ra_mesh_paths = self.build_atrial_mesh_paths(
+            mesh_base_path, ra_paths, blank_files_dir, "ra"
+        )
 
         return UVCSurfaceExtractionPaths(
             ventricular=vent_paths,
