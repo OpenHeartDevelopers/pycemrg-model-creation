@@ -4,6 +4,7 @@ from pathlib import Path
 
 # Import from our library
 from pycemrg.data import LabelManager
+from pycemrg.core import setup_logging
 from pycemrg_model_creation.logic import PathContractBuilder, SurfaceLogic
 from pycemrg_model_creation.tools import MeshtoolWrapper
 
@@ -21,6 +22,13 @@ def test_run_ventricular_extraction_on_sample_01(tmp_path, test_data_root):
     This test uses a known-good input dataset and validates that the
     SurfaceLogic engine produces the expected output files.
     """
+
+    # --- 0. Setup Detailed Logging --- # <-- ADD THIS SECTION
+    # Create a log file inside the test's temporary directory
+    log_file = tmp_path / "test_run.log"
+    setup_logging(log_level=logging.DEBUG, log_file=log_file)
+    logging.info(f"Detailed logs for this test run are in: {log_file}")
+
     # --- 1. Define Paths to the Centralized Test Data ---
     # The test expects the data to be in the location we just set up.
     sample_case_dir = test_data_root / "ventricular_extraction"

@@ -349,56 +349,60 @@ class SurfaceLogic:
             self.logger.info("Mapping connected components to final surfaces")
 
             # Define the mapping operations
+            original_surface_epi_endo = (
+                paths.epi_endo_combined.parent / f"{paths.epi_endo_combined.name}.surf"
+            )
+            original_surface_septum_raw = (
+                paths.septum_raw.parent / f"{paths.septum_raw.name}.surf"
+            )
+
             # Each tuple is: (eidx_base_name, original_surface_name, output_base_name)
             mapping_operations = [
                 # Epi, LV endo, RV endo all come from epi_endo combined surface
                 (
-                    paths.epi_surface.stem,  # "myocardium.epi" eidx/nod
-                    paths.epi_endo_combined.with_suffix(".surfmesh.surf"),
-                    paths.epi_surface.stem,
+                    paths.epi_surface,  # "myocardium.epi" eidx/nod
+                    original_surface_epi_endo,
                 ),
                 (
-                    paths.lv_endo_surface.stem,  # "myocardium.lvendo" eidx/nod
-                    paths.epi_endo_combined.with_suffix(".surfmesh.surf"),
-                    paths.lv_endo_surface.stem,
+                    paths.lv_endo_surface,  # "myocardium.lvendo" eidx/nod
+                    original_surface_epi_endo,
                 ),
                 (
-                    paths.rv_endo_surface.stem,  # "myocardium.rvendo" eidx/nod
-                    paths.epi_endo_combined.with_suffix(".surfmesh.surf"),
-                    paths.rv_endo_surface.stem,
+                    paths.rv_endo_surface,  # "myocardium.rvendo" eidx/nod
+                    original_surface_epi_endo,
                 ),
                 # LV epi intermediate and septum come from septum extraction
                 (
-                    paths.lv_epi_intermediate.stem,  # "lvepi" eidx/nod
-                    paths.septum_raw.with_suffix(".surfmesh.surf"),
-                    paths.lv_epi_intermediate.stem,
+                    paths.lv_epi_intermediate,  # "lvepi" eidx/nod
+                    original_surface_septum_raw,
                 ),
                 (
-                    paths.septum_surface.stem,  # "myocardium.rvsept" eidx/nod
-                    paths.septum_raw.with_suffix(".surfmesh.surf"),
-                    paths.septum_surface.stem,
+                    paths.septum_surface,  # "myocardium.rvsept" eidx/nod
+                    original_surface_septum_raw,
                 ),
             ]
 
             # Execute each mapping operation
-            for eidx_base, orig_surf, output_base in mapping_operations:
-                eidx_path = paths.tmp_dir / eidx_base
+            for io_path, orig_surf in mapping_operations:
+                eidx_path = io_path
+                output_path = io_path
+
                 original_surface = paths.tmp_dir / orig_surf.name
-                output_path = paths.tmp_dir / output_base
+                temp_output_path = paths.tmp_dir / output_path.name
 
                 self.logger.debug(
-                    f"Mapping {eidx_base} from {orig_surf.name} -> {output_base}"
+                    f"Mapping {eidx_path.name} from {orig_surf.name} -> {temp_output_path.name}"
                 )
 
                 mshu.connected_component_to_surface(
-                    eidx_file=eidx_path,
-                    original_surface=original_surface,
-                    output_surface=output_path,
+                    eidx_path=eidx_path,
+                    input_surface_path=original_surface,
+                    output_surface_path=output_path,
                 )
 
             mshu.surf2vtk(
-                mesh_base_path=paths.mesh.stem,
-                surface_path=paths.epi_surface.stem,
+                mesh_base_path=paths.mesh,
+                surface_path=paths.epi_surface,
                 output_vtk_path=paths.epi_surface.with_suffix(".vtk"),
             )
             self.logger.info("Surface mapping completed")
