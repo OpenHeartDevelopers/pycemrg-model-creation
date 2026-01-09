@@ -494,14 +494,16 @@ class SurfaceLogic:
 
         try:
             for surf_path, vtx_path in surface_to_vtx_map:
-                if not surf_path.is_file():
+                surf_file_with_ext = surf_path.with_suffix(".surf")
+
+                if not surf_file_with_ext.is_file():
                     # Raise an error if an input is missing, as this is a logic error.
                     raise FileNotFoundError(
-                        f"Required input surface does not exist: {surf_path}"
+                        f"Required input surface does not exist: {surf_file_with_ext}"
                     )
 
                 mshu.generate_vtx_from_surf(
-                    input_surf_path=surf_path, output_vtx_path=vtx_path
+                    input_surf_path=surf_file_with_ext, output_vtx_path=vtx_path
                 )
 
             self.logger.info("Successfully generated all required VTX files.")

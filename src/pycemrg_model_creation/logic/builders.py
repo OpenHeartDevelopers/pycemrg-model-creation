@@ -78,7 +78,7 @@ class PathContractBuilder:
             lv_endo_vtx=self.biv_dir / "biv.lvendo.vtx",
             rv_endo_vtx=self.biv_dir / "biv.rvendo.vtx",
             septum_vtx=self.biv_dir / "biv.septum.vtx",
-            apex_vtx=self.biv_dir / "biv.lvapex.vtx",
+            # apex_vtx=self.biv_dir / "biv.lvapex.vtx", # Not anymore
             rv_septum_point_vtx=self.biv_dir / "biv.rvsept_pt.vtx",
         )
 
@@ -126,7 +126,7 @@ class PathContractBuilder:
                 ventricular_paths.epi_vtx,
                 ventricular_paths.lv_endo_vtx,
                 ventricular_paths.rv_endo_vtx,
-                ventricular_paths.apex_vtx,
+                # ventricular_paths.apex_vtx, # Not anymore
                 ventricular_paths.rv_septum_point_vtx,
             ],
             mapped_vtx_output_dir=self.biv_dir / "biv",

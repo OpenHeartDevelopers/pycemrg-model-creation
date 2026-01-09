@@ -41,7 +41,7 @@ class VentricularSurfacePaths:
     lv_endo_vtx: Path
     rv_endo_vtx: Path
     septum_vtx: Path
-    apex_vtx: Path
+    #    apex_vtx: Path
     rv_septum_point_vtx: Path
 
 

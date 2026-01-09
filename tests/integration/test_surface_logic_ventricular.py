@@ -53,7 +53,8 @@ def test_run_ventricular_extraction_on_sample_01(tmp_path, test_data_root):
 
     # --- 3. Generate the Path Contract ---
     path_builder = PathContractBuilder(output_dir=output_dir)
-    all_paths = path_builder.build_all(mesh_base_path, blank_files_dir=Path("."))
+    blank_files_dir = sample_case_dir / "input_blank"
+    all_paths = path_builder.build_all(mesh_base_path, blank_files_dir=blank_files_dir)
     ventricular_paths = all_paths.ventricular
 
     # --- 4. Execute the Logic Engine ---
@@ -62,12 +63,29 @@ def test_run_ventricular_extraction_on_sample_01(tmp_path, test_data_root):
 
     # --- 5. Validation: Assert that key output files were created ---
     # This is the most important part of the test.
-    logging.info("Validating key output files...")
-    assert ventricular_paths.epi_surface.with_suffix(".vtk").exists()
-    assert ventricular_paths.lv_endo_surface.with_suffix(".vtk").exists()
-    assert ventricular_paths.rv_endo_surface.with_suffix(".vtk").exists()
-    assert ventricular_paths.septum_surface.with_suffix(".vtk").exists()
-    assert ventricular_paths.base_vtx.exists()
-    assert ventricular_paths.apex_vtx.exists()  # Assuming this is created
+    logging.info("Validating key functional output files...")
+    # These are the files required by the downstream UVC process.
+    # We check for the .surf files (geometry) and .vtx files (boundary conditions).
+    files_to_check = [
+        # Final surface geometry files
+        ventricular_paths.epi_surface.with_suffix(".surf"),
+        ventricular_paths.lv_endo_surface.with_suffix(".surf"),
+        ventricular_paths.rv_endo_surface.with_suffix(
+            ".surf"
+        ),  # This is now the free wall
+        ventricular_paths.septum_surface.with_suffix(".surf"),
+        # Final VTX boundary condition files
+        ventricular_paths.base_vtx,
+        ventricular_paths.epi_vtx,
+        ventricular_paths.lv_endo_vtx,
+        ventricular_paths.rv_endo_vtx,
+        ventricular_paths.septum_vtx,
+        # ventricular_paths.apex_vtx,  # This is copied from a template. Not needed anymore
+    ]
+
+    for file_path in files_to_check:
+        assert file_path.exists(), (
+            f"Expected functional output file not found: {file_path}"
+        )
 
     logging.info("Integration test passed: All key ventricular files were generated.")
