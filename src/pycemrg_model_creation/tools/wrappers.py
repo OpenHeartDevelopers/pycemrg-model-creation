@@ -1,6 +1,7 @@
 # src/pycemrg_carp/tools.py
 
 import logging
+import shutil
 from enum import Enum
 from pathlib import Path
 from typing import Dict, List, Sequence, Union, Optional
@@ -235,7 +236,10 @@ class MeshtoolWrapper:
     use a system-wide 'meshtool' or one from a CARPentry environment.
     """
 
-    def __init__(self, runner: Union[CommandRunner, CarpRunner]):
+    def __init__(self, 
+                 runner: Union[CommandRunner, CarpRunner], 
+                 simplify_topology_cmd: Optional[str] = 
+    ):
         """
         Initializes the MeshtoolWrapper with a specific command runner.
 
@@ -248,7 +252,20 @@ class MeshtoolWrapper:
         """
         self.runner = runner
         self.logger = logging.getLogger(__name__)
-        # We can add logic to find standalones relative to the runner if needed later.
+        self._simplify_topology_cmd = simplify_topology_cmd
+        self._simplify_topology_available =(
+            shutil.which(simplify_topology_cmd) is not None 
+        )
+        if not self._simplify_topology_available: 
+            self.logger.warning(
+                f"{self._simplify_topology_cmd} not found. "
+                "Topology simplification will not be available"
+            )
+    
+    @property
+    def is_simplify_topology_available(self) -> bool: 
+        """Returns True if the simplify_tag_topology command is available"""
+        return self._simplify_topology_available
 
     @classmethod
     def from_system_path(
@@ -606,3 +623,95 @@ class MeshtoolWrapper:
         self.runner.run(cmd, [expected_output])
 
         self.logger.info(f"Successfully generated fibres at {expected_output}")
+
+    def simplify_topology(
+        self,
+        input_mesh_path: Path,
+        output_mesh_path: Path,
+        neighbors: int = 50,
+        ifmt: str = "carp_txt",
+        ofmt: str = "carp_txt",
+    ) -> None:
+        """
+        Simplifies the topology of a mesh using the simplify_tag_topology tool.
+
+        Args:
+            input_mesh_path: Base path to the input mesh.
+            output_mesh_path: Base path for the output mesh.
+            neighbors: Number of neighbors to consider for simplification.
+            ifmt: Input format of the mesh.
+            ofmt: Output format for the mesh.
+
+        Raises:
+            RuntimeError: If the simplify_tag_topology command is not available.
+        """
+        if not self.is_simplify_topology_available:
+            raise RuntimeError(
+                f"Cannot simplify topology: '{self._simplify_topology_cmd}' "
+                "command not found. Please ensure it is in your system PATH "
+                "or provide the full path during wrapper initialization."
+            )
+
+        self.logger.info(f"Simplifying topology for {input_mesh_path.name}")
+        cmd: List[Union[str, Path]] = [
+            self._simplify_topology_cmd,
+            f"-msh={input_mesh_path}",
+            f"-outmsh={output_mesh_path}",
+            f"-neigh={neighbors}",
+            f"-ifmt={ifmt}",
+            f"-ofmt={ofmt}",
+        ]
+
+        exts = ["elem", "pts"] if ofmt == "carp_txt" else [ofmt]
+        expected = [output_mesh_path.with_suffix(f".{ext}") for ext in exts]
+        self.runner.run(cmd, expected_outputs=expected)
+        self.logger.info(
+            f"Successfully created simplified mesh at {output_mesh_path}"
+        )
+
+
+
+class Meshtools3DWrapper:
+    """
+    A low-level wrapper for the meshtools3d binary.
+
+    This wrapper's sole responsibility is to execute the meshtools3d command
+    with a given parameter file. It does not create the parameter file.
+    """
+
+    def __init__(self, runner: CommandRunner, meshtools3d_path: Path):
+        """
+        Initializes the wrapper.
+
+        Args:
+            runner: A CommandRunner to execute the process.
+            meshtools3d_path: The absolute path to the meshtools3d binary.
+        """
+        self.runner = runner
+        self.meshtools3d_path = meshtools3d_path
+        self.logger = logging.getLogger(__name__)
+
+        if not self.meshtools3d_path.is_file():
+            raise FileNotFoundError(
+                f"meshtools3d binary not found at the specified path: "
+                f"{self.meshtools3d_path}"
+            )
+
+    def run(self, parameter_file: Path, expected_outputs: List[Path]) -> None:
+        """
+        Executes the meshtools3d binary with a given parameter file.
+
+        Args:
+            parameter_file: Path to the .par file for configuration.
+            expected_outputs: A list of files the command is expected to create.
+        """
+        if not parameter_file.is_file():
+            raise FileNotFoundError(f"Parameter file not found: {parameter_file}")
+
+        self.logger.info(
+            f"Executing meshtools3d with parameter file: {parameter_file.name}"
+        )
+        cmd = [str(self.meshtools3d_path), "-f", str(parameter_file)]
+
+        self.runner.run(cmd=cmd, expected_outputs=expected_outputs)
+        self.logger.info("meshtools3d execution completed successfully.")

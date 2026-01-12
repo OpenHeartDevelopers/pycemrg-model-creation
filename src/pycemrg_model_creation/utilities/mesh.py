@@ -274,6 +274,22 @@ def surf2vtk(mesh_base_path: Path, surface_path: Path, output_vtk_path: Path) ->
     surface_mesh.save(output_vtk_path, binary=False)
     logger.info(f"Successfully saved VTK surface to {output_vtk_path}")
 
+# def vtx2pts(vtx_path: Path, pts_path: Path, output_pts_path: Path) -> None:
+#     """
+#     Convert VTX file of indices into a .pts readable by paraview 
+    
+#     :param vtx_path: Description
+#     :type vtx_path: Path
+#     :param pts_path: Description
+#     :type pts_path: Path
+#     :param output_pts_path: Description
+#     :type output_pts_path: Path
+#     """
+
+#     vtx = np.loadtxt(vtx_path, dtype=int, skiprows=2)
+#     pts = read_pts(pts_path)
+
+    
 
 # SURFACE OPERATIONS
 def find_numbered_parts(directory: Path, base_prefix: str) -> List[str]:
