@@ -236,35 +236,40 @@ class MeshtoolWrapper:
     use a system-wide 'meshtool' or one from a CARPentry environment.
     """
 
-    def __init__(self, 
-                 runner: Union[CommandRunner, CarpRunner], 
-                 simplify_topology_cmd: Optional[str] = 
+    def __init__(
+        self,
+        runner: Union[CommandRunner, CarpRunner],
+        meshtool_install_dir: Optional[Path] = None,
     ):
         """
         Initializes the MeshtoolWrapper with a specific command runner.
 
-        It is recommended to use the `from_system_path` or `from_carp_runner`
-        classmethod constructors instead of calling this directly.
-
         Args:
-            runner: An initialized runner (CommandRunner or CarpRunner) that
-                    will be used for command execution.
+            runner: An initialized runner that will be used for execution.
+            meshtool_install_dir: Path to the root meshtool installation directory.
+                                  Required to locate standalone tools like
+                                  simplify_tag_topology.
         """
         self.runner = runner
         self.logger = logging.getLogger(__name__)
-        self._simplify_topology_cmd = simplify_topology_cmd
-        self._simplify_topology_available =(
-            shutil.which(simplify_topology_cmd) is not None 
-        )
-        if not self._simplify_topology_available: 
-            self.logger.warning(
-                f"{self._simplify_topology_cmd} not found. "
-                "Topology simplification will not be available"
-            )
-    
+        
+        # Configure standalone tools
+        self._simplify_topology_cmd: Optional[Path] = None
+        self._simplify_topology_available = False
+
+        if meshtool_install_dir:
+            self._simplify_topology_cmd = meshtool_install_dir / "standalones/simplify_tag_topology"
+            self._simplify_topology_available = self._simplify_topology_cmd.is_file()
+
+            if not self._simplify_topology_available:
+                self.logger.warning(
+                    f"simplify_tag_topology not found at {self._simplify_topology_cmd}. "
+                    "Topology simplification will not be available."
+                )
+
     @property
-    def is_simplify_topology_available(self) -> bool: 
-        """Returns True if the simplify_tag_topology command is available"""
+    def is_simplify_topology_available(self) -> bool:
+        """Returns True if the simplify_tag_topology command is available."""
         return self._simplify_topology_available
 
     @classmethod
@@ -647,9 +652,8 @@ class MeshtoolWrapper:
         """
         if not self.is_simplify_topology_available:
             raise RuntimeError(
-                f"Cannot simplify topology: '{self._simplify_topology_cmd}' "
-                "command not found. Please ensure it is in your system PATH "
-                "or provide the full path during wrapper initialization."
+                "Cannot simplify topology: 'simplify_tag_topology' command not found. "
+                "Ensure 'meshtool_install_dir' is provided during initialization."
             )
 
         self.logger.info(f"Simplifying topology for {input_mesh_path.name}")

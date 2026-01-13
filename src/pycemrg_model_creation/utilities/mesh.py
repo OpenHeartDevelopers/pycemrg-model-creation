@@ -142,7 +142,6 @@ def read_surf(surface_path: Path) -> np.ndarray:
 
 # WRITING FUNCTIONS
 
-
 def write_surf(
     surface_cells: NDArray[np.int_], output_path: Path
 ) -> None:  # refactor note: use for write_surface
@@ -526,3 +525,62 @@ def identify_epi_from_endo(
     else:
         logger.info(f"'{component1_base_path.name}' identified as Endocardium.")
         return component2_base_path, component1_base_path
+
+def relabel_carp_elem_file(
+    input_elem_path: Path, 
+    output_elem_path: Path, 
+    tag_mapping: Dict[int, int], 
+    elem_type: ElemType = ElemType.Tt
+) -> None:
+    """
+    Reads a CARP .elem file, replaces element tags, and writes a new file.
+
+    This function leverages the existing read/write helpers in this module.
+
+    Args:
+        input_elem_path: The path to the source .elem file.
+        output_elem_path: The path to write the new, relabeled .elem file.
+        tag_mapping: A dictionary mapping {old_tag: new_tag}.
+
+    Raises:
+        FileNotFoundError: If the input_elem_path does not exist.
+        ValueError: If the .elem file is empty or malformed.
+    """
+    if not input_elem_path.is_file():
+        raise FileNotFoundError(f"Input element file not found: {input_elem_path}")
+
+    logger.info(f"Relabeling element tags from {input_elem_path.name}")
+
+    # 1. Read the entire .elem file, including connectivity and tags
+    try:
+        with open(input_elem_path, 'r') as f:
+            num_elems = f.readline().strip()
+        
+        elements_with_tags = read_elem(elem_path=input_elem_path, elem_type=elem_type, read_tags=True)
+        
+    except Exception as e:
+        logger.error(f"Failed to read element file {input_elem_path}: {e}")
+        raise ValueError(f"Malformed .elem file: {input_elem_path}") from e
+
+    # 2. Perform the tag replacement on the last column
+    tag_column = elements_with_tags[:, -1]
+    
+    # Create a copy to modify
+    new_tags = tag_column.copy()
+    for old_tag, new_tag in tag_mapping.items():
+        new_tags[tag_column == old_tag] = new_tag
+        
+    elements_with_tags[:, -1] = new_tags
+    
+    # 3. Write the new .elem file
+    output_elem_path.parent.mkdir(parents=True, exist_ok=True)
+    np.savetxt(
+        output_elem_path, 
+        elements_with_tags,
+        fmt='%s' + ' %d' * (elements_with_tags.shape[1] - 1), # Format first col as string ('Tt'), rest as int
+        header=num_elems, 
+        comments=''
+    )
+    
+
+    logger.info(f"Successfully wrote relabeled element file to {output_elem_path.name}")

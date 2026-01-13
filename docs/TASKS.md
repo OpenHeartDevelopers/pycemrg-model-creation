@@ -36,7 +36,7 @@ This document outlines the planned development tasks for the `pycemrg-model-crea
 
 -   [ ] Refine `MeshtoolWrapper.extract_unreachable` to specify and validate its expected outputs, removing the current `TODO`.
 -   [ ] Update `API_reference.md` to include the `MeshingLogic`, `UvcLogic`, and `FibreLogic` classes as they are completed.
--   [ ] Review all `PathContractBuilder` methods to ensure they handle file copying for templates (like `apex_vtx` for atria) consistently.
+-   [ ] Review all `ModelCreationPathBuilder` methods to ensure they handle file copying for templates (like `apex_vtx` for atria) consistently.
 
 ---
 

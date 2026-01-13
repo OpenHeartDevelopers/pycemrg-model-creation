@@ -5,7 +5,7 @@ from pathlib import Path
 # Import from our library
 from pycemrg.data import LabelManager
 from pycemrg.core import setup_logging
-from pycemrg_model_creation.logic import PathContractBuilder, SurfaceLogic
+from pycemrg_model_creation.logic import ModelCreationPathBuilder, SurfaceLogic
 from pycemrg_model_creation.tools import MeshtoolWrapper
 
 
@@ -52,7 +52,7 @@ def test_run_ventricular_extraction_on_sample_01(tmp_path, test_data_root):
     label_manager = LabelManager(config_path=labels_config_path)
 
     # --- 3. Generate the Path Contract ---
-    path_builder = PathContractBuilder(output_dir=output_dir)
+    path_builder = ModelCreationPathBuilder(output_dir=output_dir)
     blank_files_dir = sample_case_dir / "input_blank"
     all_paths = path_builder.build_all(mesh_base_path, blank_files_dir=blank_files_dir)
     ventricular_paths = all_paths.ventricular

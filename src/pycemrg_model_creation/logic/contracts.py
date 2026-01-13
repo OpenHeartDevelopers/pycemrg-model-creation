@@ -24,6 +24,26 @@ class MeshingPaths:
     output_mesh_base: Path
 
 @dataclass
+class MeshPostprocessingPaths:
+    """Path contract for the mesh post-processing workflow."""
+
+    # Input
+    # Base path to the raw mesh from meshtools3d (e.g., .../heart_mesh)
+    input_mesh_base: Path
+
+    # Directories
+    output_dir: Path
+    tmp_dir: Path
+
+    # Intermediate mesh (in tmp_dir)
+    # The mesh after extracting myocardium tags, before optional simplification
+    intermediate_myocardium_mesh: Path
+
+    # Final output mesh (in output_dir)
+    # The final, cleaned, and relabeled mesh base name
+    output_mesh_base: Path
+
+@dataclass
 class VentricularSurfacePaths:
     """
     Path contract for ventricular (BiV) surface extraction.

@@ -4,6 +4,8 @@ from pathlib import Path
 from typing import List, Union
 
 from .contracts import (
+    MeshingPaths, 
+    MeshPostprocessingPaths,
     VentricularSurfacePaths,
     AtrialSurfacePaths,
     BiVMeshPaths,
@@ -11,8 +13,83 @@ from .contracts import (
     UVCSurfaceExtractionPaths,
 )
 
+class MeshingPathBuilder:
+    """
+    Builds path contracts for meshing and refinement workflows.
 
-class PathContractBuilder:
+    This builder is initialized with a single root output directory and
+    constructs all necessary subdirectories and file paths for both the
+    initial volumetric meshing (MeshingLogic) and the subsequent
+    post-processing/refinement (RefinementLogic).
+    """
+
+    def __init__(self, output_dir: Union[Path, str]):
+        """
+        Initializes the builder with a main output directory for all
+        meshing-related activities.
+
+        Args:
+            output_dir: The root directory for meshing outputs.
+        """
+        self.root_output_dir = Path(output_dir)
+
+        # Define and create structured subdirectories
+        self.raw_mesh_dir = self.root_output_dir / "01_raw"
+        self.refined_mesh_dir = self.root_output_dir / "02_refined"
+        self.tmp_dir = self.root_output_dir / "tmp"
+
+        for d in [self.raw_mesh_dir, self.refined_mesh_dir, self.tmp_dir]:
+            d.mkdir(parents=True, exist_ok=True)
+
+    def build_meshing_paths(
+        self,
+        input_nifti: Path,
+        raw_mesh_basename: str = "heart_mesh"
+    ) -> MeshingPaths:
+        """
+        Constructs the MeshingPaths contract for the initial meshing workflow.
+
+        Args:
+            input_nifti: The path to the source NIfTI segmentation file.
+            raw_mesh_basename: The base name for the raw mesh output.
+
+        Returns:
+            A fully populated MeshingPaths dataclass instance.
+        """
+        return MeshingPaths(
+            input_segmentation_nifti=input_nifti,
+            output_dir=self.raw_mesh_dir,
+            tmp_dir=self.tmp_dir,
+            intermediate_inr=self.tmp_dir / f"{input_nifti.stem}.inr",
+            intermediate_parameter_file=self.tmp_dir / "meshing.par",
+            output_mesh_base=self.raw_mesh_dir / raw_mesh_basename,
+        )
+
+    def build_postprocessing_paths(
+        self,
+        input_mesh_base: Path,
+        refined_mesh_basename: str = "myocardium_clean"
+    ) -> MeshPostprocessingPaths:
+        """
+        Constructs the MeshPostprocessingPaths contract for the refinement workflow.
+
+        Args:
+            input_mesh_base: The base path of the mesh to be processed
+                             (typically the output from the initial meshing step).
+            refined_mesh_basename: The base name for the final, refined mesh.
+
+        Returns:
+            A fully populated MeshPostprocessingPaths dataclass instance.
+        """
+        return MeshPostprocessingPaths(
+            input_mesh_base=input_mesh_base,
+            output_dir=self.refined_mesh_dir,
+            tmp_dir=self.tmp_dir,
+            intermediate_myocardium_mesh=self.tmp_dir / "myocardium_intermediate",
+            output_mesh_base=self.refined_mesh_dir / refined_mesh_basename,
+        )
+
+class ModelCreationPathBuilder:
     """
     A helper class to simplify the creation of path contract dataclasses.
 

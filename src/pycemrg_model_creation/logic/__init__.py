@@ -13,12 +13,12 @@ from .contracts import (
     UVCSurfaceExtractionPaths  
 )
 
-from .builders import PathContractBuilder
+from .builders import ModelCreationPathBuilder
 from .surfaces import SurfaceLogic
 
 __all__ = [
     "SurfaceLogic",
-    "PathContractBuilder",
+    "ModelCreationPathBuilder",
     "VentricularSurfacePaths",
     "AtrialSurfacePaths",
     "BiVMeshPaths",
