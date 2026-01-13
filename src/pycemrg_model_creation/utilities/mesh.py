@@ -142,6 +142,7 @@ def read_surf(surface_path: Path) -> np.ndarray:
 
 # WRITING FUNCTIONS
 
+
 def write_surf(
     surface_cells: NDArray[np.int_], output_path: Path
 ) -> None:  # refactor note: use for write_surface
@@ -273,10 +274,11 @@ def surf2vtk(mesh_base_path: Path, surface_path: Path, output_vtk_path: Path) ->
     surface_mesh.save(output_vtk_path, binary=False)
     logger.info(f"Successfully saved VTK surface to {output_vtk_path}")
 
+
 # def vtx2pts(vtx_path: Path, pts_path: Path, output_pts_path: Path) -> None:
 #     """
-#     Convert VTX file of indices into a .pts readable by paraview 
-    
+#     Convert VTX file of indices into a .pts readable by paraview
+
 #     :param vtx_path: Description
 #     :type vtx_path: Path
 #     :param pts_path: Description
@@ -288,7 +290,6 @@ def surf2vtk(mesh_base_path: Path, surface_path: Path, output_vtk_path: Path) ->
 #     vtx = np.loadtxt(vtx_path, dtype=int, skiprows=2)
 #     pts = read_pts(pts_path)
 
-    
 
 # SURFACE OPERATIONS
 def find_numbered_parts(directory: Path, base_prefix: str) -> List[str]:
@@ -526,61 +527,50 @@ def identify_epi_from_endo(
         logger.info(f"'{component1_base_path.name}' identified as Endocardium.")
         return component2_base_path, component1_base_path
 
+
 def relabel_carp_elem_file(
-    input_elem_path: Path, 
-    output_elem_path: Path, 
-    tag_mapping: Dict[int, int], 
-    elem_type: ElemType = ElemType.Tt
+    input_elem_path: Path, output_elem_path: Path, tag_mapping: Dict[int, int]
 ) -> None:
     """
     Reads a CARP .elem file, replaces element tags, and writes a new file.
-
-    This function leverages the existing read/write helpers in this module.
-
-    Args:
-        input_elem_path: The path to the source .elem file.
-        output_elem_path: The path to write the new, relabeled .elem file.
-        tag_mapping: A dictionary mapping {old_tag: new_tag}.
-
-    Raises:
-        FileNotFoundError: If the input_elem_path does not exist.
-        ValueError: If the .elem file is empty or malformed.
+    This version correctly preserves the element type string in the first column.
     """
     if not input_elem_path.is_file():
         raise FileNotFoundError(f"Input element file not found: {input_elem_path}")
 
     logger.info(f"Relabeling element tags from {input_elem_path.name}")
 
-    # 1. Read the entire .elem file, including connectivity and tags
-    try:
-        with open(input_elem_path, 'r') as f:
-            num_elems = f.readline().strip()
-        
-        elements_with_tags = read_elem(elem_path=input_elem_path, elem_type=elem_type, read_tags=True)
-        
-    except Exception as e:
-        logger.error(f"Failed to read element file {input_elem_path}: {e}")
-        raise ValueError(f"Malformed .elem file: {input_elem_path}") from e
+    with open(input_elem_path, "r") as f_in:
+        header = f_in.readline().strip()
+        lines = f_in.readlines()
 
-    # 2. Perform the tag replacement on the last column
-    tag_column = elements_with_tags[:, -1]
-    
-    # Create a copy to modify
-    new_tags = tag_column.copy()
-    for old_tag, new_tag in tag_mapping.items():
-        new_tags[tag_column == old_tag] = new_tag
-        
-    elements_with_tags[:, -1] = new_tags
-    
-    # 3. Write the new .elem file
+    if not lines:
+        raise ValueError(f"No data found in {input_elem_path} after header.")
+
+    new_lines = []
+    for line in lines:
+        parts = line.strip().split()
+        if not parts:
+            continue
+
+        elem_type = parts[0]
+        # All other parts are expected to be integers
+        connectivity_and_tag = [int(p) for p in parts[1:]]
+
+        # The tag is the last element
+        old_tag = connectivity_and_tag[-1]
+
+        # Replace the tag if it's in the mapping
+        connectivity_and_tag[-1] = tag_mapping.get(old_tag, old_tag)
+
+        # Reconstruct the line
+        new_line_parts = [elem_type] + [str(p) for p in connectivity_and_tag]
+        new_lines.append(" ".join(new_line_parts) + "\n")
+
     output_elem_path.parent.mkdir(parents=True, exist_ok=True)
-    np.savetxt(
-        output_elem_path, 
-        elements_with_tags,
-        fmt='%s' + ' %d' * (elements_with_tags.shape[1] - 1), # Format first col as string ('Tt'), rest as int
-        header=num_elems, 
-        comments=''
-    )
-    
+    with open(output_elem_path, "w") as f_out:
+        f_out.write(header + "\n")
+        f_out.writelines(new_lines)
 
     logger.info(f"Successfully wrote relabeled element file to {output_elem_path.name}")
+

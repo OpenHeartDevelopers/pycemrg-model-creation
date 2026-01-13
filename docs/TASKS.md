@@ -4,8 +4,8 @@ This document outlines the planned development tasks for the `pycemrg-model-crea
 
 ### Immediate Next Steps
 
--   [ ] Port mesh smoothing from legacy code.
--   [ ] Create an integration test for the `MeshingLogic` workflow to validate the newly refactored `meshtools3d` functionality.
+-   [X] Port mesh smoothing from legacy code.
+-   [X] Create an integration test for the `MeshingLogic` workflow to validate the newly refactored `meshtools3d` functionality.
 -   [ ] Implement the Ventricular UVC Calculation Workflow:
     -   [ ] Define the `VentricularUVCPaths` dataclass in `logic/contracts.py`.
     -   [ ] Create the `UvcLogic` class in a new `logic/uvc.py` file, initialized with a `CarpWrapper`.
