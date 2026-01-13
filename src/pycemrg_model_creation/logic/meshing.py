@@ -9,7 +9,7 @@ from typing import Dict, Any
 from pycemrg_model_creation.logic.contracts import MeshingPaths
 from pycemrg_model_creation.tools.wrappers import Meshtools3DWrapper
 from pycemrg_model_creation.utilities.config import Meshtools3DParameters
-from pycemrg_model_creation.utilities.image import convert_nifti_to_inr
+from pycemrg_model_creation.utilities.image import convert_image_to_inr
 
 
 class MeshingLogic:
@@ -50,7 +50,7 @@ class MeshingLogic:
         self.logger.info("--- Starting meshtools3d meshing workflow ---")
 
         # 1. Convert NIfTI segmentation to INR format
-        convert_nifti_to_inr(
+        convert_image_to_inr(
             nifti_path=paths.input_segmentation_nifti,
             inr_path=paths.intermediate_inr,
         )

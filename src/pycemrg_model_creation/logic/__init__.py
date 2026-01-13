@@ -6,6 +6,8 @@ logic built on top of the low-level tool wrappers.
 """
 
 from .contracts import (
+    MeshingPaths,
+    MeshPostprocessingPaths,
     VentricularSurfacePaths,
     AtrialSurfacePaths,
     BiVMeshPaths,
@@ -13,11 +15,21 @@ from .contracts import (
     UVCSurfaceExtractionPaths  
 )
 
-from .builders import ModelCreationPathBuilder
+from .builders import (
+    MeshingPathBuilder, 
+    ModelCreationPathBuilder
+)
+
 from .surfaces import SurfaceLogic
+from .meshing import MeshingLogic
+from .refinement import RefinementLogic
 
 __all__ = [
     "SurfaceLogic",
+    "MeshingLogic",
+    "RefinementLogic",
+    "MeshingPaths",
+    "MeshPostprocessingPaths",
     "ModelCreationPathBuilder",
     "VentricularSurfacePaths",
     "AtrialSurfacePaths",

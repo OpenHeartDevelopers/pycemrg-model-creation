@@ -25,7 +25,7 @@ def test_run_ventricular_extraction_on_sample_01(tmp_path, test_data_root):
 
     # --- 0. Setup Detailed Logging --- # <-- ADD THIS SECTION
     # Create a log file inside the test's temporary directory
-    log_file = tmp_path / "test_run.log"
+    log_file = tmp_path / "test_run_extract_surfaces.log"
     setup_logging(log_level=logging.DEBUG, log_file=log_file)
     logging.info(f"Detailed logs for this test run are in: {log_file}")
 

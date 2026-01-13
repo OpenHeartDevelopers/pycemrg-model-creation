@@ -10,7 +10,7 @@ import SimpleITK as sitk
 logger = logging.getLogger(__name__)
 
 
-def convert_nifti_to_inr(nifti_path: Path, inr_path: Path) -> None:
+def convert_image_to_inr(nifti_path: Path, inr_path: Path) -> None:
     """
     Converts a NIfTI file to the INRIMAGE-4 format required by some legacy tools.
 

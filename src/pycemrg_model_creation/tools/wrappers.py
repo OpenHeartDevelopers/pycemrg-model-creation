@@ -274,7 +274,9 @@ class MeshtoolWrapper:
 
     @classmethod
     def from_system_path(
-        cls, logger: Optional[logging.Logger] = None
+        cls, 
+        logger: Optional[logging.Logger] = None, 
+        meshtool_install_dir: Optional[Path] = None,
     ) -> "MeshtoolWrapper":
         """
         Creates a MeshtoolWrapper instance that uses a system-wide 'meshtool'.
@@ -286,7 +288,7 @@ class MeshtoolWrapper:
         """
         # Uses the generic CommandRunner from pycemrg
         runner = CommandRunner(logger=logger)
-        return cls(runner)
+        return cls(runner, meshtool_install_dir=meshtool_install_dir)
 
     @classmethod
     def from_carp_runner(cls, carp_runner: CarpRunner) -> "MeshtoolWrapper":

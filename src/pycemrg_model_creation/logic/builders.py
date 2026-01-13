@@ -43,24 +43,24 @@ class MeshingPathBuilder:
 
     def build_meshing_paths(
         self,
-        input_nifti: Path,
+        input_image: Path,
         raw_mesh_basename: str = "heart_mesh"
     ) -> MeshingPaths:
         """
         Constructs the MeshingPaths contract for the initial meshing workflow.
 
         Args:
-            input_nifti: The path to the source NIfTI segmentation file.
+            input_image: The path to the source NIfTI segmentation file.
             raw_mesh_basename: The base name for the raw mesh output.
 
         Returns:
             A fully populated MeshingPaths dataclass instance.
         """
         return MeshingPaths(
-            input_segmentation_nifti=input_nifti,
+            input_segmentation_nifti=input_image,
             output_dir=self.raw_mesh_dir,
             tmp_dir=self.tmp_dir,
-            intermediate_inr=self.tmp_dir / f"{input_nifti.stem}.inr",
+            intermediate_inr=self.tmp_dir / f"{input_image.stem}.inr",
             intermediate_parameter_file=self.tmp_dir / "meshing.par",
             output_mesh_base=self.raw_mesh_dir / raw_mesh_basename,
         )
