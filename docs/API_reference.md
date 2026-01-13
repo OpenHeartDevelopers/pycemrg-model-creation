@@ -1,145 +1,142 @@
-### **`pycemrg-model-creation` API Reference**
+## **`pycemrg-model-creation` API Reference**
 
 #### **1. Overview**
 
-The `pycemrg-model-creation` library provides a high-level, Pythonic framework for executing complex cardiac modeling workflows. Its primary initial capability is the extraction of ventricular surfaces required for Universal Ventricular Coordinate (UVC) generation. The library is designed with a layered architecture to provide both convenience for common tasks and flexibility for advanced users.
+The `pycemrg-model-creation` library provides a high-level, Pythonic framework for executing complex cardiac modeling workflows. It encapsulates logic for volumetric meshing from segmentations, mesh refinement, and the extraction of surfaces for coordinate system generation.
 
-**The typical user workflow is:**
-1.  Initialize low-level dependencies (`pycemrg.data.LabelManager` and `MeshtoolWrapper`).
-2.  Use the `ModelCreationPathBuilder` to generate all necessary input/output paths for a workflow from a single output directory and an input mesh path.
-3.  Instantiate the `SurfaceLogic` class with the dependencies.
-4.  Call a high-level workflow method (e.g., `run_ventricular_extraction()`) on the `SurfaceLogic` instance, passing it the paths contract.
+The library is designed with a layered architecture, separating stateless scientific logic from orchestration helpers and low-level tool wrappers.
+
+**A typical multi-stage user workflow is:**
+1.  Initialize a `MeshingPathBuilder` for the meshing stage. Use it to generate a `MeshingPaths` contract.
+2.  Instantiate and run `MeshingLogic` to create a raw volumetric mesh from a segmentation.
+3.  Use the same `MeshingPathBuilder` to generate a `MeshPostprocessingPaths` contract.
+4.  Instantiate and run `RefinementLogic` to clean, extract, and relabel the raw mesh.
+5.  Initialize a `ModelCreationPathBuilder` for the model annotation stage. Use it to generate a `VentricularSurfacePaths` contract.
+6.  Instantiate and run `SurfaceLogic` to extract geometric surfaces and boundary conditions (`.vtx` files).
 
 ---
 
-#### **2. Orchestration Helper: `ModelCreationPathBuilder`**
+#### **2. Orchestration Helpers: Path Builders**
 
-This is the recommended starting point for orchestrator scripts. It simplifies the setup process by generating the complex path contracts required by the logic layer, enforcing consistent naming conventions.
+Path builders are the recommended starting point for orchestrator scripts. They translate high-level directory paths into the detailed, explicit contracts required by the logic layer, enforcing consistent file and directory naming.
 
+##### **`MeshingPathBuilder`**
+**Entry Point:** `pycemrg_model_creation.logic.MeshingPathBuilder`
+*   **Scope:** All workflows related to the creation and refinement of the primary volumetric mesh.
+*   **Initialization:**
+    ```python
+    from pycemrg_model_creation.logic import MeshingPathBuilder
+    meshing_output_dir = Path("/path/to/patient_01/04_meshing")
+    meshing_builder = MeshingPathBuilder(output_dir=meshing_output_dir)
+    ```
+*   **Methods:**
+    *   `build_meshing_paths(...) -> MeshingPaths`: Builds the contract for the initial volumetric meshing from a segmentation.
+    *   `build_postprocessing_paths(...) -> MeshPostprocessingPaths`: Builds the contract for cleaning, submeshing, and relabeling a raw mesh.
+
+##### **`ModelCreationPathBuilder`**
 **Entry Point:** `pycemrg_model_creation.logic.ModelCreationPathBuilder`
-
-**Initialization:**
-```python
-from pathlib import Path
-from pycemrg_model_creation.logic import ModelCreationPathBuilder
-
-# Provide a single root directory for all outputs
-output_dir = Path("/path/to/patient_01/uvc_preparation")
-path_builder = ModelCreationPathBuilder(output_dir=output_dir)
-```
-
-**Methods:**
-
-*   **`build_all(mesh_base_path: Path, blank_files_dir: Path) -> UVCSurfaceExtractionPaths`**:
-    *   **Purpose:** The main convenience method. It constructs the master path contract containing sub-contracts for all supported workflows (ventricular, atrial, submeshes).
-    *   **Args:**
-        *   `mesh_base_path`: The base path to the input mesh, without extension (e.g., `Path("meshes/myocardium")`).
-        *   `blank_files_dir`: Directory containing template/blank files (e.g., for atrial apex/septum points when running atrial workflows).
-    *   **Returns:** A fully populated `UVCSurfaceExtractionPaths` dataclass instance.
-
-*   **Granular Builders**: The class also provides more specific builder methods (`build_ventricular_paths`, `build_atrial_paths`, `build_biv_mesh_paths`) for users who only need to run parts of the full workflow.
-
----
-
-#### **3. The Logic Layer: `SurfaceLogic` Class**
-
-This class is the stateless "engine" for the scientific workflow of extracting cardiac surfaces. It contains the operational logic and orchestrates calls to the low-level tool wrappers.
-
-**Entry Point:** `pycemrg_model_creation.logic.SurfaceLogic`
-
-**Initialization:**
-```python
-from pycemrg.data import LabelManager
-from pycemrg_model_creation.tools import MeshtoolWrapper
-from pycemrg_model_creation.logic import SurfaceLogic
-
-# 1. Initialize dependencies first
-# Assumes 'meshtool' is in the system PATH
-meshtool = MeshtoolWrapper.from_system_path() 
-# Assumes a 'labels.yaml' file exists for the project
-label_manager = LabelManager("/path/to/project/config/labels.yaml")
-
-# 2. Instantiate the logic class
-surface_logic = SurfaceLogic(meshtool, label_manager)
-```
-
-**Primary Workflow Method:**
-
-*   **`run_ventricular_extraction(paths: VentricularSurfacePaths) -> None`**:
-    *   **Purpose:** Executes the complete, sequential workflow to extract all necessary ventricular surfaces (base, epicardium, LV/RV endocardium, septum), isolates the RV free wall, and generates their corresponding `.surf` (geometry) and `.vtx` (boundary condition) files.
-    *   **Args:**
-        *   `paths`: A `VentricularSurfacePaths` dataclass instance, typically generated by `ModelCreationPathBuilder`.
-    *   **Side Effects:** Creates numerous surface and `.vtx` files in the directories specified within the `paths` contract. These are the primary inputs for downstream UVC calculation.
-
-*   **Other Workflows**: The class also contains methods for biventricular submesh extraction (`run_biv_mesh_extraction`). This is intended for workflows starting from a four-chamber mesh and is not required if the input mesh is already ventricle-only.
-
-*   **Granular Methods**: The class exposes the individual steps of the workflow (`extract_septum`, `remove_septum_from_rv_endo`, etc.) as public methods for advanced users who may need to customize the process.
-
----
-
-#### **4. The Tool Layer: `MeshtoolWrapper` & `CarpWrapper`**
-
-These classes provide low-level, direct Python wrappers for the `meshtool` and `CARP` command-line utilities. They are used internally by the logic layer but are also available for advanced users needing to perform one-off tasks.
-
-**Entry Point:** `pycemrg_model_creation.tools.MeshtoolWrapper`
-**Entry Point:** `pycemrg_model_creation.tools.CarpWrapper`
-
-**Initialization:**
-
-*   **For `meshtool` (standalone):**
+*   **Scope:** All workflows related to annotating a mesh with scientific properties (surfaces, UVCs, fibres).
+*   **Initialization:**
     ```python
-    from pycemrg_model_creation.tools import MeshtoolWrapper
-    meshtool = MeshtoolWrapper.from_system_path()
-    ```
-
-*   **For tools within a CARPentry environment:**
-    ```python
-    from pycemrg.system import CarpRunner
-    from pycemrg_model_creation.tools import MeshtoolWrapper, CarpWrapper
-    
-    carp_runner = CarpRunner(carp_config_path="/path/to/carp_config.sh")
-
-    meshtool = MeshtoolWrapper.from_carp_runner(carp_runner)
-    carp_wrapper = CarpWrapper(carp_runner)
-    ```
-
-**Methods:**
-Each class provides Pythonic methods that map directly to the subcommands of the tool (e.g., `meshtool.extract_surface(...)`, `carp_wrapper.igb_extract(...)`). Refer to the class docstrings for detailed arguments.
+    from pycemrg_model_creation.logic import ModelCreationPathBuilder
+    model_output_dir = Path("/path/to/patient_01/05_model_creation")
+    model_builder = ModelCreationPathBuilder(output_dir=model_output_dir)
+    ```*   **Methods:**
+    *   `build_ventricular_paths(...) -> VentricularSurfacePaths`: Builds the contract for extracting ventricular surfaces.
 
 ---
 
-#### **5. Full Usage Example (Ventricle-Only Mesh)**
+#### **3. The Logic Layer (The "Engines")**
 
-This example ties everything together for a common use case: generating UVC input files from a mesh that contains only the ventricles.
+These classes are the stateless orchestrators for the scientific workflows. They contain the "how-to" logic for each stage of the pipeline.
+
+##### **`MeshingLogic` & `RefinementLogic`**
+*   **Entry Points:** `pycemrg_model_creation.logic.MeshingLogic`, `pycemrg_model_creation.logic.RefinementLogic`
+*   **Purpose:**
+    *   `MeshingLogic`: Converts a segmentation image (`.nii`, `.nrrd`) into a raw volumetric mesh using `meshtools3d`.
+    *   `RefinementLogic`: Takes a raw mesh, extracts a sub-region (e.g., myocardium), optionally simplifies its topology, and relabels its element tags to a consistent standard.
+*   **Primary Methods:**
+    *   `MeshingLogic.run_meshing(paths: MeshingPaths, ...)`
+    *   `RefinementLogic.run_myocardium_postprocessing(paths: MeshPostprocessingPaths, ...)`
+
+##### **`SurfaceLogic`**
+*   **Entry Point:** `pycemrg_model_creation.logic.SurfaceLogic`
+*   **Purpose:** Extracts geometric surfaces (e.g., epicardium, endocardium) and boundary condition files (`.vtx`) from a clean, volumetric mesh.
+*   **Primary Method:**
+    *   `run_ventricular_extraction(paths: VentricularSurfacePaths)`
+
+---
+
+#### **4. The Tool Layer (The "Power Tools")**
+
+These classes provide low-level, direct Python wrappers for command-line utilities. They are used internally by the logic layer but are also available for advanced, one-off tasks.
+
+*   `pycemrg_model_creation.tools.Meshtools3DWrapper`: Wraps the `meshtools3d` binary for volumetric meshing.
+*   `pycemrg_model_creation.tools.MeshtoolWrapper`: Wraps the `meshtool` binary and its standalones (like `simplify_tag_topology`) for mesh manipulation.
+*   `pycemrg_model_creation.tools.CarpWrapper`: Wraps `CARP` tools like `mguvc` and `GlRuleFibres`.
+
+---
+
+#### **5. Full Usage Example (Meshing & Surface Extraction)**
+
+This example ties the first two major stages together.
 
 ```python
 from pathlib import Path
 from pycemrg.data import LabelManager
-from pycemrg_model_creation.logic import ModelCreationPathBuilder, SurfaceLogic
-from pycemrg_model_creation.tools import MeshtoolWrapper
+from pycemrg.system import CommandRunner
+from pycemrg_model_creation.logic import (
+    MeshingPathBuilder, ModelCreationPathBuilder,
+    MeshingLogic, RefinementLogic, SurfaceLogic
+)
+from pycemrg_model_creation.tools import (
+    Meshtools3DWrapper, MeshtoolWrapper
+)
 
-# --- 1. Define High-Level Paths and Config ---
+# --- 1. Define High-Level Paths and Dependencies ---
 project_dir = Path("/data/patient_01")
-output_dir = project_dir / "uvc_preparation"
-mesh_base_path = project_dir / "biv_mesh/myocardium"
+segmentation_image = project_dir / "02_anatomy/labels/whole_heart.nii.gz"
 labels_config = project_dir / "config/labels.yaml"
-# This directory can be empty for the ventricular-only workflow
-blank_files_dir = project_dir / "config/templates" 
+meshtools3d_binary = Path("/path/to/meshtools3d")
+meshtool_install_dir = Path("/path/to/meshtool/installation")
 
-# --- 2. Initialize Dependencies ---
-meshtool = MeshtoolWrapper.from_system_path()
+runner = CommandRunner()
 label_manager = LabelManager(labels_config)
 
-# --- 3. Generate the Path Contract ---
-# The builder handles creation of all subdirectories and file paths.
-path_builder = ModelCreationPathBuilder(output_dir=output_dir)
-# We only need the ventricular part of the master contract.
-all_paths = path_builder.build_all(mesh_base_path, blank_files_dir=blank_files_dir)
-ventricular_paths = all_paths.ventricular
+# --- STAGE 1: MESHING & REFINEMENT ---
+meshing_output_dir = project_dir / "04_meshing"
+meshing_builder = MeshingPathBuilder(output_dir=meshing_output_dir)
 
-# --- 4. Initialize and Run the Logic Engine ---
-surface_logic = SurfaceLogic(meshtool, label_manager)
-surface_logic.run_ventricular_extraction(paths=ventricular_paths)
+# Run initial meshing
+m3d_wrapper = Meshtools3DWrapper(runner, meshtools3d_binary)
+meshing_logic = MeshingLogic(m3d_wrapper)
+meshing_paths = meshing_builder.build_meshing_paths(segmentation_image)
+meshing_logic.run_meshing(paths=meshing_paths)
 
-print("Ventricular surface extraction complete. VTX files are ready for UVC calculation.")
+# Run refinement
+meshtool_wrapper = MeshtoolWrapper(runner, meshtool_install_dir)
+refinement_logic = RefinementLogic(meshtool_wrapper)
+refinement_paths = meshing_builder.build_postprocessing_paths(
+    input_mesh_base=meshing_paths.output_mesh_base
+)
+refinement_logic.run_myocardium_postprocessing(
+    paths=refinement_paths,
+    myocardium_tags=label_manager.get_source_tags(["LV", "RV"]),
+    tag_mapping=label_manager.get_source_to_target_mapping(),
+    simplify=True
+)
+print("Meshing and refinement complete.")
+
+# --- STAGE 2: SURFACE EXTRACTION ---
+model_output_dir = project_dir / "05_model_creation"
+model_builder = ModelCreationPathBuilder(output_dir=model_output_dir)
+
+# The input to this stage is the output of the previous one
+clean_mesh_base = refinement_paths.output_mesh_base 
+surface_paths = model_builder.build_ventricular_paths(clean_mesh_base)
+
+surface_logic = SurfaceLogic(meshtool_wrapper, label_manager)
+surface_logic.run_ventricular_extraction(paths=surface_paths)
+
+print("Ventricular surface extraction complete.")
 ```
