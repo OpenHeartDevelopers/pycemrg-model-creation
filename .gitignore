@@ -10,3 +10,4 @@ dist/
 .venv
 .idea/
 .vscode/
+PYCEMRG_TEST_CONFIGS
