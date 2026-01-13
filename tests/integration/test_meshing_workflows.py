@@ -4,7 +4,7 @@ import pytest
 from pathlib import Path
 
 # Import from our library
-from pycemrg.data import LabelManager
+from pycemrg.data import LabelManager, LabelMapper
 from pycemrg.core import setup_logging
 from pycemrg.system import CommandRunner
 from pycemrg_model_creation.logic import (
@@ -16,7 +16,9 @@ from pycemrg_model_creation.tools import MeshtoolWrapper, Meshtools3DWrapper
 
 @pytest.mark.integration
 @pytest.mark.slow
-def test_full_meshing_and_refinement_workflow(tmp_path, test_data_root, test_meshtool_root, test_m3d_root): 
+def test_full_meshing_and_refinement_workflow(
+    tmp_path, test_data_root, test_meshtool_root, test_m3d_root
+): 
     """
     Tests the end-to-end workflow from a segmentation image to a clean,
     refined, and relabeled mesh.
@@ -28,12 +30,16 @@ def test_full_meshing_and_refinement_workflow(tmp_path, test_data_root, test_mes
 
     sample_case_dir = test_data_root / "meshing_and_refinement"
     segmentation_path = sample_case_dir / "input_segmentation/whole_heart_segmentation_smooth.nrrd"
-    labels_config_path = sample_case_dir / "config/labels.yaml"
+    
+    source_labels_path = sample_case_dir / "config/source_labels.yaml"
+    target_labels_path = sample_case_dir / "config/target_labels.yaml"
+
     output_dir = tmp_path / "test_output"
 
     # --- Pre-condition Checks ---
     assert segmentation_path.exists(), f"Test data not found at {segmentation_path}"
-    assert labels_config_path.exists(), f"Labels config not found at {labels_config_path}"
+    assert source_labels_path.exists(), f"Labels config not found at {source_labels_path}"
+    assert target_labels_path.exists(), f"Labels config not found at {target_labels_path}"
 
     # --- 2. Run Meshing Workflow ---
     logging.info("--- STAGE 1: Running Meshing Workflow ---")
@@ -56,16 +62,19 @@ def test_full_meshing_and_refinement_workflow(tmp_path, test_data_root, test_mes
     refinement_paths = meshing_builder.build_postprocessing_paths(
         input_mesh_base=meshing_paths.output_mesh_base
     )
-    
-    label_manager = LabelManager(labels_config_path)
-    myocardium_tags = label_manager.get_source_tags(["LV", "RV"])
-    tag_mapping = label_manager.get_source_to_target_mapping()
 
     meshtool_wrapper = MeshtoolWrapper(
         runner=runner, 
         meshtool_install_dir=test_meshtool_root
     )
     refinement_logic = RefinementLogic(meshtool_wrapper=meshtool_wrapper)
+
+    source_label_manager = LabelManager(source_labels_path)
+    target_label_manager = LabelManager(target_labels_path)
+    label_mapper = LabelMapper(source=source_label_manager, target=target_label_manager)
+    
+    tag_mapping = label_mapper.get_source_to_target_mapping()
+    
     refinement_logic.run_myocardium_postprocessing(
         paths=refinement_paths,
         myocardium_tags=myocardium_tags,
