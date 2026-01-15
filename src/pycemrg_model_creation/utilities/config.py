@@ -26,7 +26,7 @@ class Meshtools3DParameters:
         'others': {'eval_thickness': 0},
         'output': {
             'outdir': './out', 'name': 'mesh', 'out_medit': 0, 'out_carp': 1,
-            'out_carp_binary': 0, 'out_vtk': 1, 'out_vtk_binary': 0,
+            'out_carp_binary': 0, 'out_vtk': 0, 'out_vtk_binary': 0,
             'out_potential': 0,
         }
     }
