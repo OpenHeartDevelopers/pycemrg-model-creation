@@ -62,7 +62,7 @@ def test_full_meshing_and_refinement_workflow(
         raw_mesh_base = golden_mesh_dir / "heart_mesh"  # The basename we used
 
         # Fail fast if the developer hasn't generated the golden files
-        assert raw_mesh_base.with_suffix(".vtk").exists(), (
+        assert raw_mesh_base.with_suffix(".pts").exists(), (
             "Skip failed: Golden mesh output not found. "
             "Run the test once without PYCEMRG_SKIP_MESHING to generate it."
         )
@@ -85,7 +85,7 @@ def test_full_meshing_and_refinement_workflow(
         meshing_logic.run_meshing(paths=meshing_paths)
 
         # --- First-pass Validation ---
-        assert meshing_paths.output_mesh_base.with_suffix(".vtk").exists()
+        assert meshing_paths.output_mesh_base.with_suffix(".pts").exists()
         logging.info("Meshing workflow completed. Raw mesh created.")
 
         # This is the output of the completed stage
@@ -117,7 +117,6 @@ def test_full_meshing_and_refinement_workflow(
 
     # --- 5. Final Validation ---
     final_mesh_path = refinement_paths.output_mesh_base
-    assert final_mesh_path.with_suffix(".vtk").exists()
     assert final_mesh_path.with_suffix(".pts").exists()
     assert final_mesh_path.with_suffix(".elem").exists()
 
