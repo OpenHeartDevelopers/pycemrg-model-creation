@@ -60,7 +60,6 @@ class MeshingLogic:
 
         # 3. Execute the meshtools3d binary via the wrapper
         expected_outputs = [
-            paths.output_mesh_base.with_suffix(".vtk"),
             paths.output_mesh_base.with_suffix(".pts"),
             paths.output_mesh_base.with_suffix(".elem"),
         ]
