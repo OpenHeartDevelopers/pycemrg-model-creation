@@ -223,9 +223,109 @@ class CarpWrapper:
         outputs_list = [f"{ofile}.dat" for ofile in initfiles_str.split(" ")]
         self.runner.run(cmd, outputs_list)
 
+    def run_mguvc(
+        self,
+        model_name: Path,
+        input_model_type: str,
+        output_model_type: str,
+        tags_file: Path,
+        output_dir: Path,
+        np: int = 1,
+        laplace_solution: bool = True,
+        custom_apex: bool = False,
+        uvc_phi_model: str = "full", 
+        expected_outputs: Optional[List[Path]] = None,
+    ) -> None:
+        """
+        Run mguvc to generate Universal Ventricular Coordinates.
 
-# ... (imports and CarpWrapper class remain the same) ...
+        Executes the mguvc tool from CARPentry to solve Laplace problems
+        that define the ventricular coordinate system.
 
+        **CRITICAL:** VTX boundary files must exist in model_name.parent with
+        standard names: base.vtx, epi.vtx, lvendo.vtx, rvendo.vtx, 
+        rvsept.vtx, rvendo_nosept.vtx
+
+        Args:
+            model_name: Full path to BiV mesh base (without extension)
+                        e.g., /surfaces_uvc/BiV/BiV for BiV.pts, BiV.elem
+                        VTX files must be in same directory (model_name.parent)
+            input_model_type: Type of input model
+                             Choices: lv, lvbp, biv, bivbp, la, labp, bia, biabp, 
+                                     h4c, h4cbp, tor
+            output_model_type: Type of output model
+                              Choices: lv, biv, la, bia, h4c
+            tags_file: Path to etags script (.sh file with bash tag definitions)
+            output_dir: Directory where UVC outputs will be written
+            np: Number of processors for parallel execution (default: 1)
+            laplace_solution: Include Laplace solution outputs (default: True)
+            custom_apex: Use custom apex definition (default: False)
+            uvc_phi_model: UVC phi model to use (default: "full")
+                          Choices: none, sept, junc, full
+
+        Raises:
+            RuntimeError: If mguvc execution fails
+
+        Output files created in output_dir (basename from model_name):
+            - {basename}.uvc_z.dat - Apico-basal coordinate
+            - {basename}.uvc_rho.dat - Transmural coordinate
+            - {basename}.uvc_phi.dat - Rotational coordinate
+            - {basename}.uvc_ven.dat - Ventricular identifier
+            - {basename}.sol_*_lap.dat - Laplace solutions (if laplace_solution=True)
+            - {basename}.aff.dat - Affine transformation
+            - {basename}.m2s.dat - Mesh-to-surface mapping
+
+        Example:
+            >>> # Directory structure:
+            >>> # /surfaces_uvc/BiV/
+            >>> #   ├── BiV.pts
+            >>> #   ├── BiV.elem
+            >>> #   ├── base.vtx
+            >>> #   ├── epi.vtx
+            >>> #   ├── lvendo.vtx
+            >>> #   ├── rvendo.vtx
+            >>> #   ├── rvsept.vtx
+            >>> #   └── rvendo_nosept.vtx
+            >>> 
+            >>> carp_wrapper.run_mguvc(
+            ...     model_name=Path("/surfaces_uvc/BiV/BiV"),
+            ...     input_model_type="biv",
+            ...     output_model_type="biv",
+            ...     tags_file=Path("/surfaces_uvc/BiV/etags.sh"),
+            ...     output_dir=Path("/surfaces_uvc/BiV/uvc"),
+            ...     np=4
+            ... )
+        """
+        # Build command - space-separated arguments
+        cmd = [
+            "mguvc",
+            "--model-name", str(model_name),      # Full path to BiV mesh
+            "--input-model", input_model_type,    # Type: "biv"
+            "--output-model", output_model_type,  # Type: "biv"
+            "--np", str(np),
+            "--tags-file", str(tags_file),
+            "--output-dir", str(output_dir)
+        ]
+
+        if uvc_phi_model != "full":
+            cmd.extend(["--uvc-phi-model", uvc_phi_model])
+
+        if laplace_solution:
+            cmd.append("--laplace-solution")
+
+        if custom_apex:
+            cmd.append("--custom-apex")
+
+        self.logger.info(f"Running mguvc: {input_model_type} → {output_model_type}")
+        self.logger.debug(f"Model: {model_name}")
+        self.logger.debug(f"Output dir: {output_dir}")
+        self.logger.debug(f"Tags file: {tags_file}")
+        self.logger.debug(f"mguvc command: {' '.join(cmd)}")
+
+        # Execute via CarpRunner
+        self.runner.run(cmd, expected_outputs=expected_outputs)
+
+        self.logger.info("mguvc completed successfully")
 
 class MeshtoolWrapper:
     """
