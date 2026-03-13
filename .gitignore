@@ -11,3 +11,4 @@ dist/
 .idea/
 .vscode/
 PYCEMRG_TEST_CONFIGS
+CLAUDE.md

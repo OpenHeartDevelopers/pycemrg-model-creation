@@ -4,6 +4,7 @@ Integration tests for UVC coordinate generation workflows.
 """
 
 import os
+import shutil
 import logging
 import pytest
 import numpy as np
@@ -80,32 +81,23 @@ def test_ventricular_uvc_calculation(test_data_root, carp_wrapper, tmp_path):
     
     logging.info(f"Loaded tags: LV={lv_tag}, RV={rv_tag}")
     
-    # Input: BiV mesh
-    biv_mesh = input_mesh_dir / "BiV"
-    assert biv_mesh.with_suffix(".pts").exists(), f"BiV mesh not found: {biv_mesh}.pts"
-    assert biv_mesh.with_suffix(".elem").exists(), f"BiV mesh not found: {biv_mesh}.elem"
-    
-    # # Input: VTX files (must be in same directory as mesh)
-    # vtx_files = [
-    #     "base.vtx",
-    #     "epi.vtx", 
-    #     "lvendo.vtx",
-    #     "rvendo.vtx",
-    #     "rvsept.vtx",
-    #     "rvendo_nosept.vtx"
-    # ]
-    
-    # for vtx_file in vtx_files:
-    #     vtx_path = input_mesh_dir / vtx_file
-    #     assert vtx_path.exists(), f"VTX file not found: {vtx_path}"
-    
+    # Copy mesh and VTX files into tmp_path so mguvc runs in an isolated,
+    # clean directory and never touches the source test data.
+    work_dir = tmp_path / "BiV"
+    work_dir.mkdir()
+    for suffix in (".pts", ".elem"):
+        src = input_mesh_dir / f"BiV{suffix}"
+        assert src.exists(), f"BiV mesh not found: {src}"
+        shutil.copy(src, work_dir / src.name)
+    for vtx_file in input_mesh_dir.glob("*.vtx"):
+        shutil.copy(vtx_file, work_dir / vtx_file.name)
+
+    biv_mesh = work_dir / "BiV"
+
     # Build UVC paths contract
     builder = ModelCreationPathBuilder(output_dir=tmp_path)
-    
-    uvc_paths = builder.build_ventricular_uvc_paths(
-        biv_mesh=biv_mesh,
-        vtx_dir=input_mesh_dir,  # VTX files already in correct location
-    )
+
+    uvc_paths = builder.build_ventricular_uvc_paths(biv_mesh=biv_mesh)
     
     # Initialize UVC logic
     uvc_logic = UvcLogic(carp_wrapper)
