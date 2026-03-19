@@ -10,6 +10,9 @@ Examples:
     python scripts/utilities/mesh_cli.py volumes --input path/to/mesh --labels 2 3
     python scripts/utilities/mesh_cli.py volumes --input path/to/mesh --format vtk
     python scripts/utilities/mesh_cli.py volumes --input path/to/mesh --input-mm --output-mm3
+    python scripts/utilities/mesh_cli.py volumes --input path/to/mesh --total-only
+    python scripts/utilities/mesh_cli.py volumes --input path/to/mesh --plain --show-header
+    python scripts/utilities/mesh_cli.py volumes --input path/to/mesh --plain --total-only
 """
 
 import argparse
@@ -135,24 +138,50 @@ def cmd_volumes(args: argparse.Namespace) -> None:
     else:
         labels_to_report = sorted(all_labels.tolist())
 
-    # Output
-    label_col = max((len(str(l)) for l in labels_to_report), default=5)
+    label_volumes = {label: raw_volumes[tags == label].sum() * scale for label in labels_to_report}
+    grand_total = sum(label_volumes.values())
+
+    if args.plain:
+        _print_plain(input_path, label_volumes, grand_total, input_unit, output_unit, args)
+    else:
+        _print_table(input_path, label_volumes, grand_total, input_unit, output_unit, args)
+
+
+def _print_table(input_path, label_volumes, grand_total, input_unit, output_unit, args):
+    print(f"\nInput:  {input_path} ({input_unit})")
+    print(f"Output: {output_unit}\n")
+
+    if args.total_only:
+        print(f"  TOTAL    {grand_total:.6f} ({output_unit})\n")
+        return
+
+    label_col = max((len(str(l)) for l in label_volumes), default=5)
     label_col = max(label_col, len("Label"))
     value_col = 16
 
-    print(f"\nInput:  {input_path} ({input_unit})")
-    print(f"Output: {output_unit}\n")
     print(f"  {'Label':>{label_col}}    {'Volume':>{value_col}} ({output_unit})")
     print(f"  {'-' * label_col}    {'-' * (value_col + 6)}")
 
-    grand_total = 0.0
-    for label in labels_to_report:
-        vol = raw_volumes[tags == label].sum() * scale
-        grand_total += vol
+    for label, vol in label_volumes.items():
         print(f"  {label:>{label_col}}    {vol:>{value_col}.6f}")
 
     print(f"  {'-' * label_col}    {'-' * (value_col + 6)}")
     print(f"  {'Total':>{label_col}}    {grand_total:>{value_col}.6f}\n")
+
+
+def _print_plain(input_path, label_volumes, grand_total, input_unit, output_unit, args):
+    if args.show_header:
+        if args.total_only:
+            print("path,total_volume,input_unit,output_unit")
+        else:
+            label_headers = ",".join(f"vol_{label}" for label in label_volumes)
+            print(f"path,{label_headers},total_volume,input_unit,output_unit")
+
+    if args.total_only:
+        print(f"{input_path},{grand_total:.6f},{input_unit},{output_unit}")
+    else:
+        label_values = ",".join(f"{vol:.6f}" for vol in label_volumes.values())
+        print(f"{input_path},{label_values},{grand_total:.6f},{input_unit},{output_unit}")
 
 
 # ---------------------------------------------------------------------------
@@ -208,6 +237,21 @@ def build_parser() -> argparse.ArgumentParser:
         "--output-mm3",
         action="store_true",
         help="Output volumes in mm³ (default: cm³).",
+    )
+    vol.add_argument(
+        "--total-only",
+        action="store_true",
+        help="Report only the grand total volume, not per-label breakdown.",
+    )
+    vol.add_argument(
+        "--plain",
+        action="store_true",
+        help="CSV output suitable for piping: path,vol_1,...,total_volume,input_unit,output_unit.",
+    )
+    vol.add_argument(
+        "--show-header",
+        action="store_true",
+        help="Print a CSV header row (only used with --plain).",
     )
     vol.set_defaults(func=cmd_volumes)
 
