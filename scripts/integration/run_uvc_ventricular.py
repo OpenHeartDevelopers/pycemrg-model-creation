@@ -28,10 +28,10 @@ import shutil
 import sys
 from pathlib import Path
 
-logging.basicConfig(
-    level=logging.DEBUG,
-    format="%(asctime)s [%(levelname)s] %(name)s - %(message)s",
-)
+from pycemrg.core.logs import setup_logging
+setup_logging(log_level=logging.DEBUG)
+
+logger = logging.getLogger(__name__)
 
 from pycemrg.system import CarpRunner, CommandRunner
 from pycemrg.data import LabelManager
@@ -63,7 +63,7 @@ def main() -> None:
     label_manager = LabelManager(config_path=labels_path)
     lv_tag = label_manager.get_value("LV")
     rv_tag = label_manager.get_value("RV")
-    logging.info(f"Loaded tags: LV={lv_tag}, RV={rv_tag}")
+    logger.info(f"Loaded tags: LV={lv_tag}, RV={rv_tag}")
 
     # Copy mesh and VTX files into the working dir so mguvc runs in an
     # isolated, clean directory and never touches the source test data.
@@ -87,7 +87,7 @@ def main() -> None:
     carp_wrapper = CarpWrapper(carp_runner)
     uvc_logic = UvcLogic(carp_wrapper)
 
-    logging.info("Starting UVC calculation...")
+    logger.info("Starting UVC calculation...")
     uvc_logic.run_ventricular_uvc_calculation(
         paths=uvc_paths,
         lv_tag=lv_tag,
@@ -95,7 +95,7 @@ def main() -> None:
         np=1,
     )
 
-    logging.info("Done. Output directory: %s", uvc_paths.output_dir)
+    logger.info("Done. Output directory: %s", uvc_paths.output_dir)
 
 
 if __name__ == "__main__":

@@ -244,9 +244,8 @@ class ModelCreationPathBuilder:
     def build_ventricular_uvc_paths(
         self,
         biv_mesh: Path,
-        vtx_dir: Path,
         output_subdir: str = "uvc",
-        overwrite_existing: bool = True, 
+        overwrite_existing: bool = True,
         backup_existing: bool = True,
     ) -> VentricularUVCPaths:
         """
@@ -280,8 +279,6 @@ class ModelCreationPathBuilder:
         Args:
             biv_mesh: BiV submesh base path (without extension)
                       e.g., /surfaces_uvc/BiV/BiV
-            vtx_dir: Directory containing mapped VTX files (source location)
-                     Files will need to be copied from here to biv_mesh.parent
             output_subdir: Subdirectory name for UVC outputs (default: "uvc")
 
         Returns:
@@ -292,11 +289,8 @@ class ModelCreationPathBuilder:
             >>> 
             >>> uvc_paths = builder.build_ventricular_uvc_paths(
             ...     biv_mesh=Path("/data/surfaces/BiV/BiV"),
-            ...     vtx_dir=Path("/data/surfaces/BiV/biv"),  # Where mapped VTX files are
             ...     output_subdir="uvc"
             ... )
-            >>> 
-            >>> # UvcLogic will handle copying VTX files from vtx_dir to biv_mesh.parent
         """
         # BiV mesh directory (where VTX files must be placed)
         biv_mesh_dir = biv_mesh.parent
