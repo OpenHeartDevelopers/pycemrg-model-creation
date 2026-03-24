@@ -20,7 +20,7 @@ import sys
 from pathlib import Path
 
 import numpy as np
-
+import pyvista as pv
 
 # ---------------------------------------------------------------------------
 # Volume computation
@@ -68,7 +68,6 @@ def _load_carp(input_path: Path):
 
 def _load_vtk(input_path: Path, tag_field: str):
     """Returns (points, connectivity, tags) from a VTK unstructured grid."""
-    import pyvista as pv
 
     vtk_path = input_path.with_suffix(".vtk")
     if not vtk_path.exists():
