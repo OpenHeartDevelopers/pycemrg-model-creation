@@ -11,9 +11,9 @@
 2. [Quick Start](#quick-start)
 3. [Core Modules](#core-modules)
    - [Configuration](#configuration)
-   - [Logic Layer](#logic-layer)
+   - [Logic Layer](#logic-layer) — `SurfaceLogic`, `UvcLogic`, `MeshingLogic`, `RefinementLogic`
    - [Tools & Wrappers](#tools--wrappers)
-   - [Path Contracts](#path-contracts)
+   - [Path Contracts](#path-contracts) — including `VentricularUVCPaths`
    - [Path Builders](#path-builders)
    - [Utilities](#utilities)
 4. [Complete Workflows](#complete-workflows)
@@ -305,6 +305,75 @@ Execute complete UVC surface extraction for all chambers.
 4. BiV submesh extraction
 5. LA submesh extraction
 6. RA submesh extraction
+
+---
+
+#### `UvcLogic`
+
+Orchestrates Universal Ventricular Coordinate (UVC) calculation using CARPentry's `mguvc` tool.
+
+**Constructor:**
+```python
+class UvcLogic:
+    def __init__(self, carp_wrapper: CarpWrapper)
+```
+
+**Parameters:**
+- `carp_wrapper`: Initialized `CarpWrapper` instance
+
+**Initialization:**
+```python
+from pycemrg.system import CarpRunner, CommandRunner
+from pycemrg_model_creation.tools.wrappers import CarpWrapper
+from pycemrg_model_creation.logic.uvc import UvcLogic
+
+carp_runner = CarpRunner(
+    runner=CommandRunner(),
+    carp_config_path=Path("/opt/carpentry/config.sh")
+)
+carp_wrapper = CarpWrapper(carp_runner)
+uvc_logic = UvcLogic(carp_wrapper)
+```
+
+---
+
+##### `run_ventricular_uvc_calculation(paths: VentricularUVCPaths, lv_tag: int, rv_tag: int, np: int = 1) -> None`
+
+Complete ventricular UVC calculation workflow.
+
+**Steps:**
+1. Validate input files (mesh `.pts`/`.elem` + 6 VTX boundary files)
+2. Generate etags script mapping element tags to anatomical regions
+3. Run `mguvc` to solve Laplace equations
+4. (Output validation is handled by `CarpRunner` via `expected_outputs`)
+
+**Parameters:**
+- `paths`: Populated `VentricularUVCPaths` contract
+- `lv_tag`: Element tag for LV myocardium in the mesh
+- `rv_tag`: Element tag for RV myocardium in the mesh
+- `np`: Number of processors for `mguvc` (default: 1)
+
+**Raises:**
+- `FileNotFoundError`: If required input files (mesh or VTX) are missing
+- `RuntimeError`: If `mguvc` exits with an error or expected outputs are not created
+
+**Output files created in `paths.output_dir`:**
+- `{basename}.uvc_z.dat` — Apico-basal coordinate (apex=0, base=1)
+- `{basename}.uvc_rho.dat` — Transmural coordinate (endo=0, epi=1)
+- `{basename}.uvc_phi.dat` — Rotational/circumferential coordinate
+- `{basename}.uvc_ven.dat` — Ventricular identifier (LV vs RV)
+- `{basename}.sol_*_lap.dat` — Laplace solutions (4 files, when `--laplace-solution` is set)
+- `{basename}.aff.dat`, `{basename}.m2s.dat` — Mapping files
+
+**Example:**
+```python
+uvc_logic.run_ventricular_uvc_calculation(
+    paths=uvc_paths,
+    lv_tag=1,
+    rv_tag=2,
+    np=4
+)
+```
 
 ---
 
@@ -909,6 +978,54 @@ class UVCSurfaceExtractionPaths:
 
 ---
 
+#### `VentricularUVCPaths`
+
+Path contract for ventricular UVC calculation. This is the only **frozen** contract — all fields are immutable once built.
+
+**Critical layout requirement:** `mguvc` expects the BiV mesh and all six VTX boundary files to be co-located in the same directory with standard names. The builder enforces this layout.
+
+**Fields:**
+```python
+@dataclass(frozen=True)
+class VentricularUVCPaths:
+    # Input: BiV submesh (without extension)
+    biv_mesh: Path          # e.g. /data/BiV/BiV
+
+    # Input: VTX boundary files — must be in biv_mesh.parent
+    base_vtx: Path          # BiV.base.vtx
+    epi_vtx: Path           # BiV.epi.vtx
+    lv_endo_vtx: Path       # BiV.lvendo.vtx
+    rv_endo_vtx: Path       # BiV.rvendo.vtx
+    septum_vtx: Path        # BiV.rvsept.vtx
+    rvendo_nosept_vtx: Path # BiV.rvendo_nosept.vtx
+
+    # Input: etags script — written to biv_mesh.parent (NOT inside output_dir)
+    etags_file: Path        # BiV.etags.sh
+
+    # Output directory — created by mguvc, not by the builder
+    output_dir: Path        # biv_mesh.parent / "uvc"
+
+    # Primary UVC coordinate outputs (in output_dir)
+    uvc_z: Path             # Apico-basal
+    uvc_rho: Path           # Transmural
+    uvc_phi: Path           # Rotational
+    uvc_ven: Path           # Ventricular identifier
+
+    # Intermediate Laplace solutions (in output_dir)
+    sol_apba: Path
+    sol_endoepi: Path
+    sol_lvendo: Path
+    sol_rvendo: Path
+
+    # Mapping files (in output_dir)
+    aff_dat: Path
+    m2s_dat: Path
+```
+
+**Note on etags placement:** The etags file is written to `biv_mesh.parent` (alongside the mesh), not inside `output_dir`. This is intentional — `mguvc` prompts interactively if `output_dir` already exists, so the directory must not be created before the tool runs. The etags file must be written somewhere accessible before `mguvc` starts; placing it next to the mesh avoids the problem.
+
+---
+
 ### Path Builders
 
 Builders simplify path contract creation using standard naming conventions. They encapsulate directory structure decisions.
@@ -1061,6 +1178,59 @@ all_paths = builder.build_all(
 ventricular_paths = all_paths.ventricular
 la_paths = all_paths.left_atrial
 biv_mesh_paths = all_paths.biv_mesh
+```
+
+---
+
+##### `build_ventricular_uvc_paths(biv_mesh: Path, output_subdir: str = "uvc", overwrite_existing: bool = True, backup_existing: bool = True) -> VentricularUVCPaths`
+
+Build path contract for ventricular UVC calculation.
+
+**Parameters:**
+- `biv_mesh`: Base path to the BiV submesh (without extension). **The output location is derived from this path** — outputs always land in `biv_mesh.parent / output_subdir`. There is no separate `output_dir` argument.
+- `output_subdir`: Name of the output subdirectory (default: `"uvc"`)
+- `backup_existing`: If `True` (default), an existing `output_subdir` is renamed with a timestamp before proceeding
+- `overwrite_existing`: If `True` and `backup_existing=False`, deletes the existing directory instead
+
+**Side effects at build time:**
+- If `output_subdir` already exists and `backup_existing=True`, it is moved to `{output_subdir}_backup_{timestamp}` immediately when this method is called — before any logic runs
+- The output directory is **not** created by the builder; `mguvc` creates it during execution
+
+**Path layout produced:**
+```
+biv_mesh.parent/            # e.g. /data/surfaces/BiV/
+├── BiV.pts                 # BiV mesh (pre-existing)
+├── BiV.elem
+├── BiV.base.vtx            # VTX boundary files (pre-existing)
+├── BiV.epi.vtx
+├── BiV.lvendo.vtx
+├── BiV.rvendo.vtx
+├── BiV.rvsept.vtx
+├── BiV.rvendo_nosept.vtx
+├── BiV.etags.sh            # Written by UvcLogic._generate_etags
+└── uvc/                    # Created by mguvc during execution
+    ├── BiV.uvc_z.dat
+    ├── BiV.uvc_rho.dat
+    ├── BiV.uvc_phi.dat
+    ├── BiV.uvc_ven.dat
+    ├── BiV.sol_*_lap.dat
+    ├── BiV.aff.dat
+    └── BiV.m2s.dat
+```
+
+**Example:**
+```python
+# Assumes biv_mesh_paths.output_mesh was produced by run_biv_mesh_extraction
+# and VTX files have been mapped into the same directory
+biv_mesh = Path("/data/surfaces/BiV/BiV")
+
+uvc_paths = builder.build_ventricular_uvc_paths(biv_mesh=biv_mesh)
+
+uvc_logic.run_ventricular_uvc_calculation(
+    paths=uvc_paths,
+    lv_tag=1,
+    rv_tag=2
+)
 ```
 
 ---
@@ -1453,6 +1623,60 @@ surface_logic.run_biv_mesh_extraction(
 )
 
 print(f"✓ Ventricular surfaces ready for UVC calculation")
+```
+
+---
+
+### UVC Coordinate Calculation
+
+Once the BiV submesh and VTX files are in place (output of the ventricular-only workflow above), run UVC calculation:
+
+```python
+from pathlib import Path
+from pycemrg.system import CarpRunner, CommandRunner
+from pycemrg_model_creation.tools.wrappers import CarpWrapper
+from pycemrg_model_creation.logic.uvc import UvcLogic
+from pycemrg_model_creation.logic.builders import ModelCreationPathBuilder
+
+# Initialize CARPentry
+carp_runner = CarpRunner(
+    runner=CommandRunner(),
+    carp_config_path=Path("/opt/carpentry/config.sh")
+)
+carp_wrapper = CarpWrapper(carp_runner)
+uvc_logic = UvcLogic(carp_wrapper)
+
+# The BiV submesh produced by run_biv_mesh_extraction.
+# The builder derives output_dir from this path: biv_mesh.parent / "uvc"
+biv_mesh = Path("/data/patient_001/surfaces/BiV/BiV")
+
+builder = ModelCreationPathBuilder(output_dir="/data/patient_001/surfaces")
+uvc_paths = builder.build_ventricular_uvc_paths(biv_mesh=biv_mesh)
+
+# lv_tag and rv_tag must match the element tags in the BiV mesh
+uvc_logic.run_ventricular_uvc_calculation(
+    paths=uvc_paths,
+    lv_tag=1,
+    rv_tag=2,
+    np=4
+)
+
+# Outputs are in biv_mesh.parent / "uvc":
+print(uvc_paths.output_dir)      # /data/patient_001/surfaces/BiV/uvc
+print(uvc_paths.uvc_z)           # .../uvc/BiV.uvc_z.dat
+print(uvc_paths.uvc_rho)         # .../uvc/BiV.uvc_rho.dat
+```
+
+**Re-running on existing data:**
+
+If `uvc/` already exists from a previous run, `build_ventricular_uvc_paths` backs it up automatically (default `backup_existing=True`). To delete instead of backup:
+
+```python
+uvc_paths = builder.build_ventricular_uvc_paths(
+    biv_mesh=biv_mesh,
+    backup_existing=False,
+    overwrite_existing=True
+)
 ```
 
 ---

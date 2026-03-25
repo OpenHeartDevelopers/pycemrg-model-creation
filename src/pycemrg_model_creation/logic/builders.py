@@ -296,7 +296,6 @@ class ModelCreationPathBuilder:
         biv_mesh_dir = biv_mesh.parent
         mesh_basename = biv_mesh.name # e.g., "BiV", can't have extension
 
-        # Create UVC output directory
         uvc_dir = biv_mesh_dir / output_subdir
         # Handle existing directory
         if uvc_dir.exists():
@@ -314,10 +313,10 @@ class ModelCreationPathBuilder:
                     f"Use overwrite_existing=True to remove or backup_existing=True to backup"
                 )
 
-        uvc_dir.mkdir(parents=True, exist_ok=True)
-
-        # etags file path (will be created during UVC workflow)
-        etags_file = uvc_dir / f"{mesh_basename}.etags.sh"
+        # etags file lives alongside the mesh, not inside output_dir.
+        # This avoids pre-creating output_dir, which would cause mguvc to
+        # prompt interactively when it finds the directory already exists.
+        etags_file = biv_mesh_dir / f"{mesh_basename}.etags.sh"
 
         return VentricularUVCPaths(
             # Input: BiV submesh

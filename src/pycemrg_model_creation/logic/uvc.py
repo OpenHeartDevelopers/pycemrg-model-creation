@@ -88,9 +88,6 @@ class UvcLogic:
         # Step 3: Run mguvc
         self._run_mguvc(paths, np)
 
-        # Step 4: Validate outputs
-        self._validate_outputs(paths)
-
         self.logger.info("=" * 60)
         self.logger.info("UVC calculation completed successfully")
         self.logger.info(f"UVC coordinates written to: {paths.output_dir}")
