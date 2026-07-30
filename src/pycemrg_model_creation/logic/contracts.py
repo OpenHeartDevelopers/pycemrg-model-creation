@@ -5,30 +5,12 @@ from pathlib import Path
 from typing import List
 
 @dataclass
-class MeshingPaths:
-    """Path contract for the meshtools3d meshing workflow."""
-
-    # Input
-    input_segmentation_nifti: Path
-
-    # Directories
-    output_dir: Path
-    tmp_dir: Path
-
-    # Intermediate files (in tmp_dir)
-    intermediate_inr: Path
-    intermediate_parameter_file: Path
-
-    # Final output (in output_dir)
-    # This is a base path; extensions (.vtk, .pts, .elem) will be added.
-    output_mesh_base: Path
-
-@dataclass
 class MeshPostprocessingPaths:
     """Path contract for the mesh post-processing workflow."""
 
     # Input
-    # Base path to the raw mesh from meshtools3d (e.g., .../heart_mesh)
+    # Base path to a raw volumetric mesh (e.g., .../heart_mesh), produced
+    # upstream of this library.
     input_mesh_base: Path
 
     # Directories

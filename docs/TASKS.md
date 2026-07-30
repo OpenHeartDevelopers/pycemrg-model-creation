@@ -2,15 +2,28 @@
 
 This document outlines the planned development tasks for the `pycemrg-model-creation` library.
 
+The pipeline starts at refinement (myocardium extraction from a volumetric mesh). Volumetric
+meshing from a segmentation is owned by `pycemrg-meshing`; the `MeshingLogic` /
+`Meshtools3DWrapper` / `Meshtools3DParameters` / `convert_image_to_inr` layer was removed from
+this repo.
+
 ### Immediate Next Steps
 
 -   [X] Port mesh smoothing from legacy code.
--   [X] Create an integration test for the `MeshingLogic` workflow to validate the newly refactored `meshtools3d` functionality.
--   [ ] Implement the Ventricular UVC Calculation Workflow:
-    -   [ ] Define the `VentricularUVCPaths` dataclass in `logic/contracts.py`.
-    -   [ ] Create the `UvcLogic` class in a new `logic/uvc.py` file, initialized with a `CarpWrapper`.
-    -   [ ] Implement the `run_ventricular_uvc_calculation` method within `UvcLogic`.
-    -   [ ] Create a new integration test, `test_uvc_logic.py`, to validate the full UVC generation process.
+-   [X] Implement the Ventricular UVC Calculation Workflow:
+    -   [X] Define the `VentricularUVCPaths` dataclass in `logic/contracts.py`.
+    -   [X] Create the `UvcLogic` class in a new `logic/uvc.py` file, initialized with a `CarpWrapper`.
+    -   [X] Implement the `run_ventricular_uvc_calculation` method within `UvcLogic`.
+    -   [X] Create a new integration test, `test_uvc_logic_ventricular.py`, to validate the full UVC generation process.
+-   [ ] Resolve the `mguvc` VTX naming conflict: `build_ventricular_uvc_paths` emits
+        `{basename}.base.vtx` and `UvcLogic._validate_inputs` requires it, but the UVC test and
+        debug script copy the plain `base.vtx` names that `mguvc` itself reads.
+-   [ ] Fix `SurfaceLogic.run_all`: it still passes `tags` to `run_ventricular_extraction` and
+        `run_atrial_extraction`, which dropped that parameter when tag lookup moved to the
+        injected `LabelManager`. Any call raises `TypeError`.
+-   [ ] Fix `MeshtoolWrapper.map`: its debug log calls `f.name` on each entry, but callers pass
+        `str`. Also `insert_meshdata`, annotated `MeshDataOperation` but membership-tested against
+        string keys, so passing the enum raises `ValueError`.
 
 ### Core Feature Development
 
@@ -81,7 +94,7 @@ This document outlines the planned development tasks for the `pycemrg-model-crea
 ### Refinement & Maintenance
 
 -   [ ] Refine `MeshtoolWrapper.extract_unreachable` to specify and validate its expected outputs, removing the current `TODO`.
--   [ ] Update `API_reference.md` to include the `MeshingLogic`, `UvcLogic`, and `FibreLogic` classes as they are completed.
+-   [ ] Update `API_reference.md` to include the `UvcLogic` and `FibreLogic` classes as they are completed.
 -   [ ] Review all `ModelCreationPathBuilder` methods to ensure they handle file copying for templates (like `apex_vtx` for atria) consistently.
 
 ---

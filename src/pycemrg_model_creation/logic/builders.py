@@ -7,7 +7,6 @@ from datetime import datetime
 from typing import List, Union
 
 from .contracts import (
-    MeshingPaths, 
     MeshPostprocessingPaths,
     VentricularSurfacePaths,
     AtrialSurfacePaths,
@@ -19,57 +18,34 @@ from .contracts import (
 
 logger = logging.getLogger(__name__)
 
-class MeshingPathBuilder:
+class RefinementPathBuilder:
     """
-    Builds path contracts for meshing and refinement workflows.
+    Builds path contracts for the mesh refinement workflow.
 
     This builder is initialized with a single root output directory and
-    constructs all necessary subdirectories and file paths for both the
-    initial volumetric meshing (MeshingLogic) and the subsequent
+    constructs the subdirectories and file paths needed for
     post-processing/refinement (RefinementLogic).
+
+    The raw volumetric mesh is an input, produced upstream of this library,
+    so the builder does not own or create a directory for it.
     """
 
     def __init__(self, output_dir: Union[Path, str]):
         """
         Initializes the builder with a main output directory for all
-        meshing-related activities.
+        refinement-related activities.
 
         Args:
-            output_dir: The root directory for meshing outputs.
+            output_dir: The root directory for refinement outputs.
         """
         self.root_output_dir = Path(output_dir)
 
         # Define and create structured subdirectories
-        self.raw_mesh_dir = self.root_output_dir / "01_raw"
         self.refined_mesh_dir = self.root_output_dir / "02_refined"
         self.tmp_dir = self.root_output_dir / "tmp"
 
-        for d in [self.raw_mesh_dir, self.refined_mesh_dir, self.tmp_dir]:
+        for d in [self.refined_mesh_dir, self.tmp_dir]:
             d.mkdir(parents=True, exist_ok=True)
-
-    def build_meshing_paths(
-        self,
-        input_image: Path,
-        raw_mesh_basename: str = "heart_mesh"
-    ) -> MeshingPaths:
-        """
-        Constructs the MeshingPaths contract for the initial meshing workflow.
-
-        Args:
-            input_image: The path to the source NIfTI segmentation file.
-            raw_mesh_basename: The base name for the raw mesh output.
-
-        Returns:
-            A fully populated MeshingPaths dataclass instance.
-        """
-        return MeshingPaths(
-            input_segmentation_nifti=input_image,
-            output_dir=self.raw_mesh_dir,
-            tmp_dir=self.tmp_dir,
-            intermediate_inr=self.tmp_dir / f"{input_image.stem}.inr",
-            intermediate_parameter_file=self.tmp_dir / "meshing.par",
-            output_mesh_base=self.raw_mesh_dir / raw_mesh_basename,
-        )
 
     def build_postprocessing_paths(
         self,
@@ -80,8 +56,8 @@ class MeshingPathBuilder:
         Constructs the MeshPostprocessingPaths contract for the refinement workflow.
 
         Args:
-            input_mesh_base: The base path of the mesh to be processed
-                             (typically the output from the initial meshing step).
+            input_mesh_base: The base path of the raw volumetric mesh to be
+                             processed (produced upstream of this library).
             refined_mesh_basename: The base name for the final, refined mesh.
 
         Returns:

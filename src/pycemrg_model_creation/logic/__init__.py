@@ -6,7 +6,6 @@ logic built on top of the low-level tool wrappers.
 """
 
 from pycemrg_model_creation.logic.contracts import (
-    MeshingPaths,
     MeshPostprocessingPaths,
     VentricularSurfacePaths,
     AtrialSurfacePaths,
@@ -17,23 +16,20 @@ from pycemrg_model_creation.logic.contracts import (
 )
 
 from pycemrg_model_creation.logic.builders import (
-    MeshingPathBuilder, 
+    RefinementPathBuilder,
     ModelCreationPathBuilder,
 )
 
 from pycemrg_model_creation.logic.surfaces import SurfaceLogic
-from pycemrg_model_creation.logic.meshing import MeshingLogic
 from pycemrg_model_creation.logic.refinement import RefinementLogic
 from pycemrg_model_creation.logic.uvc import UvcLogic
 
 __all__ = [
     # Logic classes
     "SurfaceLogic",
-    "MeshingLogic",
     "RefinementLogic",
     "UvcLogic",
     # Path contracts
-    "MeshingPaths",
     "MeshPostprocessingPaths",
     "VentricularSurfacePaths",
     "AtrialSurfacePaths",
@@ -42,6 +38,6 @@ __all__ = [
     "UVCSurfaceExtractionPaths",
     "VentricularUVCPaths",
     # Path builders
-    "MeshingPathBuilder",
+    "RefinementPathBuilder",
     "ModelCreationPathBuilder",
 ]

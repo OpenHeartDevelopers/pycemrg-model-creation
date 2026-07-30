@@ -12,3 +12,5 @@ dist/
 .vscode/
 PYCEMRG_TEST_CONFIGS
 CLAUDE.md
+.claude/ 
+.claude/**

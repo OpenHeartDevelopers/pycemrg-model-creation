@@ -11,7 +11,7 @@
 2. [Quick Start](#quick-start)
 3. [Core Modules](#core-modules)
    - [Configuration](#configuration)
-   - [Logic Layer](#logic-layer) — `SurfaceLogic`, `UvcLogic`, `MeshingLogic`, `RefinementLogic`
+   - [Logic Layer](#logic-layer) — `SurfaceLogic`, `UvcLogic`, `RefinementLogic`
    - [Tools & Wrappers](#tools--wrappers)
    - [Path Contracts](#path-contracts) — including `VentricularUVCPaths`
    - [Path Builders](#path-builders)
@@ -24,11 +24,13 @@
 
 ## Overview
 
-`pycemrg_model_creation` provides high-level abstractions for creating patient-specific cardiac computational models. The library follows a layered architecture:
+`pycemrg_model_creation` provides high-level abstractions for creating patient-specific cardiac computational models. The pipeline starts from a raw volumetric mesh; generating that mesh from a segmentation is the responsibility of `pycemrg-meshing`.
 
-- **Configuration Layer**: Define anatomical tags and meshing parameters
+The library follows a layered architecture:
+
+- **Configuration Layer**: Define anatomical tags
 - **Path Contracts**: Explicit, type-safe path specifications for all I/O operations
-- **Logic Layer**: Stateless, scientific workflows for meshing, refinement, and surface extraction
+- **Logic Layer**: Stateless, scientific workflows for refinement, surface extraction, and UVC
 - **Tools Layer**: Low-level wrappers for CARPentry command-line tools
 - **Utilities Layer**: Pure functions for mesh/geometry operations
 
@@ -377,55 +379,6 @@ uvc_logic.run_ventricular_uvc_calculation(
 
 ---
 
-#### `MeshingLogic`
-
-Orchestrates volumetric meshing from segmentation images using meshtools3d.
-
-**Constructor:**
-```python
-class MeshingLogic:
-    def __init__(self, meshtools3d_wrapper: Meshtools3DWrapper)
-```
-
-##### `run_meshing(paths: MeshingPaths, meshing_params: Dict[str, Any] = None, cleanup: bool = True) -> None`
-
-Execute full meshtools3d workflow.
-
-**Steps:**
-1. Convert NIfTI segmentation to INR format
-2. Generate meshtools3d parameter file (.par)
-3. Execute meshtools3d binary
-4. Clean up intermediate files (optional)
-
-**Parameters:**
-- `paths`: MeshingPaths contract
-- `meshing_params`: Optional parameter overrides (nested dict by section)
-- `cleanup`: If True, deletes .inr and .par intermediate files
-
-**Parameter override example:**
-```python
-meshing_logic.run_meshing(
-    paths=meshing_paths,
-    meshing_params={
-        'meshing': {
-            'facet_size': '0.7',
-            'cell_size': '0.8'
-        },
-        'output': {
-            'out_vtk': 1
-        }
-    },
-    cleanup=True
-)
-```
-
-**Output files:**
-- `{output_mesh_base}.pts` - Mesh vertices
-- `{output_mesh_base}.elem` - Mesh elements with tags
-- `{output_mesh_base}.vtk` - VTK visualization file
-
----
-
 #### `RefinementLogic`
 
 Post-processes and refines raw meshes.
@@ -752,72 +705,9 @@ carp_wrapper.igb_extract(
 
 ---
 
-#### `Meshtools3DWrapper`
-
-Low-level wrapper for the `meshtools3d` binary.
-
-**Constructor:**
-```python
-class Meshtools3DWrapper:
-    def __init__(self, runner: CommandRunner, meshtools3d_path: Path)
-```
-
-**Initialization:**
-```python
-from pycemrg.system import CommandRunner
-
-runner = CommandRunner()
-meshtools3d = Meshtools3DWrapper(
-    runner=runner,
-    meshtools3d_path=Path("/opt/meshtools3d/meshtools3d")
-)
-```
-
-##### `run(parameter_file: Path, expected_outputs: List[Path]) -> None`
-
-Execute meshtools3d with parameter file.
-
-```python
-meshtools3d.run(
-    parameter_file=Path("meshing.par"),
-    expected_outputs=[
-        Path("mesh.pts"),
-        Path("mesh.elem"),
-        Path("mesh.vtk")
-    ]
-)
-```
-
----
-
 ### Path Contracts
 
 Path contracts are frozen dataclasses that explicitly define all input/output paths for workflows. They eliminate ambiguity and make I/O transparent.
-
-#### `MeshingPaths`
-
-Defines paths for volumetric meshing workflow.
-
-**Fields:**
-```python
-@dataclass(frozen=True)
-class MeshingPaths:
-    # Input
-    input_segmentation_nifti: Path
-    
-    # Directories
-    output_dir: Path
-    tmp_dir: Path
-    
-    # Intermediate files (in tmp_dir)
-    intermediate_inr: Path
-    intermediate_parameter_file: Path
-    
-    # Final output (in output_dir)
-    output_mesh_base: Path  # Base name without extension
-```
-
----
 
 #### `MeshPostprocessingPaths`
 
@@ -828,7 +718,7 @@ Defines paths for mesh refinement workflow.
 @dataclass(frozen=True)
 class MeshPostprocessingPaths:
     # Input
-    input_mesh_base: Path  # Raw mesh from meshtools3d
+    input_mesh_base: Path  # Raw volumetric mesh, produced upstream
     
     # Directories
     output_dir: Path
@@ -1030,58 +920,43 @@ class VentricularUVCPaths:
 
 Builders simplify path contract creation using standard naming conventions. They encapsulate directory structure decisions.
 
-#### `MeshingPathBuilder`
+#### `RefinementPathBuilder`
 
-Constructs path contracts for meshing and refinement workflows.
+Constructs path contracts for the refinement workflow. The raw volumetric mesh is an
+input produced upstream of this library, so the builder does not own a directory for it.
 
 **Constructor:**
 ```python
-class MeshingPathBuilder:
+class RefinementPathBuilder:
     def __init__(self, output_dir: Union[Path, str])
 ```
 
 **Directory structure created:**
 ```
 output_dir/
-├── 01_raw/          # Raw mesh outputs from meshtools3d
 ├── 02_refined/      # Refined mesh outputs
 └── tmp/             # Intermediate files
 ```
 
 **Methods:**
 
-##### `build_meshing_paths(input_image: Path, raw_mesh_basename: str = "heart_mesh") -> MeshingPaths`
-
-Build paths for initial meshing workflow.
-
-```python
-builder = MeshingPathBuilder(output_dir="/data/patient_001/meshing")
-
-meshing_paths = builder.build_meshing_paths(
-    input_image=Path("/data/patient_001/segmentation.nii.gz"),
-    raw_mesh_basename="heart_mesh"
-)
-```
-
-**Generated paths:**
-- Input: `/data/patient_001/segmentation.nii.gz`
-- Output: `/data/patient_001/meshing/01_raw/heart_mesh.{pts,elem,vtk}`
-- Temp: `/data/patient_001/meshing/tmp/`
-
 ##### `build_postprocessing_paths(input_mesh_base: Path, refined_mesh_basename: str = "myocardium_clean") -> MeshPostprocessingPaths`
 
 Build paths for refinement workflow.
 
 ```python
+builder = RefinementPathBuilder(output_dir="/data/patient_001/model")
+
 refinement_paths = builder.build_postprocessing_paths(
-    input_mesh_base=meshing_paths.output_mesh_base,
+    input_mesh_base=Path("/data/patient_001/raw_mesh/heart_mesh"),
     refined_mesh_basename="myocardium_clean"
 )
 ```
 
 **Generated paths:**
-- Input: `/data/patient_001/meshing/01_raw/heart_mesh`
-- Output: `/data/patient_001/meshing/02_refined/myocardium_clean.{pts,elem,vtk}`
+- Input: `/data/patient_001/raw_mesh/heart_mesh`
+- Output: `/data/patient_001/model/02_refined/myocardium_clean.{pts,elem,vtk}`
+- Temp: `/data/patient_001/model/tmp/`
 
 ---
 
@@ -1383,64 +1258,6 @@ Determine fraction of surface normals pointing outward from reference point.
 
 ---
 
-#### Image Utilities (`utilities/image.py`)
-
-##### `convert_image_to_inr(nifti_path: Path, inr_path: Path) -> None`
-
-Convert NIfTI file to INRIMAGE-4 format (legacy meshtools3d requirement).
-
-**Supported dtypes:** bool, uint8, uint16, int16, float32, float64
-
----
-
-#### Configuration Utilities (`utilities/config.py`)
-
-##### `Meshtools3DParameters`
-
-Helper class to generate meshtools3d parameter files.
-
-```python
-from pycemrg_model_creation.utilities.config import Meshtools3DParameters
-
-params = Meshtools3DParameters()
-
-# Update parameters
-params.update('meshing', 'facet_size', '0.7')
-params.update('meshing', 'cell_size', '0.8')
-params.update('output', 'out_vtk', '1')
-
-# Save to file
-params.save(Path("meshing.par"))
-```
-
-**Default parameters:**
-```python
-DEFAULT_VALUES = {
-    'segmentation': {
-        'seg_dir': './',
-        'seg_name': 'seg.inr',
-        'mesh_from_segmentation': 1,
-        'boundary_relabeling': 0,
-    },
-    'meshing': {
-        'facet_angle': 30,
-        'facet_size': 0.8,
-        'facet_distance': 4,
-        'cell_rad_edge_ratio': 2.0,
-        'cell_size': 0.8,
-        'rescaleFactor': 1000
-    },
-    'output': {
-        'outdir': './out',
-        'name': 'mesh',
-        'out_carp': 1,
-        'out_vtk': 0,
-    }
-}
-```
-
----
-
 ## Complete Workflows
 
 ### End-to-End Model Creation Pipeline
@@ -1452,13 +1269,11 @@ from pycemrg.core import setup_logging
 from pycemrg.data import LabelManager, LabelMapper
 from pycemrg.system import CommandRunner
 from pycemrg_model_creation import (
-    MeshingLogic,
     RefinementLogic,
     SurfaceLogic,
-    MeshingPathBuilder,
+    RefinementPathBuilder,
     ModelCreationPathBuilder,
     MeshtoolWrapper,
-    Meshtools3DWrapper,
     TagsConfig
 )
 from pycemrg_model_creation.types import Chamber
@@ -1467,7 +1282,8 @@ from pycemrg_model_creation.types import Chamber
 setup_logging(log_level=logging.INFO, log_file="pipeline.log")
 
 patient_dir = Path("/data/patient_001")
-segmentation = patient_dir / "segmentation.nii.gz"
+# The raw volumetric mesh is produced upstream of this library (see pycemrg-meshing).
+raw_mesh_base = patient_dir / "raw_mesh/heart_mesh"
 source_labels_config = patient_dir / "source_labels.yaml"
 target_labels_config = patient_dir / "target_labels.yaml"
 output_dir = patient_dir / "model_outputs"
@@ -1479,40 +1295,16 @@ runner = CommandRunner()
 meshtool = MeshtoolWrapper.from_system_path(
     meshtool_install_dir=Path("/opt/meshtool")
 )
-meshtools3d = Meshtools3DWrapper(
-    runner=runner,
-    meshtools3d_path=Path("/opt/meshtools3d/meshtools3d")
-)
 
 source_label_manager = LabelManager(config_path=source_labels_config)
 target_label_manager = LabelManager(config_path=target_labels_config)
 
-# --- Stage 1: Generate Volumetric Mesh ---
-logging.info("STAGE 1: Volumetric Meshing")
+# --- Stage 1: Refine and Relabel Mesh ---
+logging.info("STAGE 1: Mesh Refinement")
 
-meshing_builder = MeshingPathBuilder(output_dir=output_dir / "meshing")
-meshing_paths = meshing_builder.build_meshing_paths(
-    input_image=segmentation,
-    raw_mesh_basename="heart_mesh"
-)
-
-meshing_logic = MeshingLogic(meshtools3d_wrapper=meshtools3d)
-meshing_logic.run_meshing(
-    paths=meshing_paths,
-    meshing_params={
-        'meshing': {
-            'facet_size': '0.7',
-            'cell_size': '0.7'
-        }
-    },
-    cleanup=True
-)
-
-# --- Stage 2: Refine and Relabel Mesh ---
-logging.info("STAGE 2: Mesh Refinement")
-
-refinement_paths = meshing_builder.build_postprocessing_paths(
-    input_mesh_base=meshing_paths.output_mesh_base,
+refinement_builder = RefinementPathBuilder(output_dir=output_dir / "refinement")
+refinement_paths = refinement_builder.build_postprocessing_paths(
+    input_mesh_base=raw_mesh_base,
     refined_mesh_basename="myocardium_clean"
 )
 
@@ -1536,8 +1328,8 @@ refinement_logic.run_myocardium_postprocessing(
     simplify=True
 )
 
-# --- Stage 3: Extract UVC Surfaces ---
-logging.info("STAGE 3: UVC Surface Extraction")
+# --- Stage 2: Extract UVC Surfaces ---
+logging.info("STAGE 2: UVC Surface Extraction")
 
 surface_builder = ModelCreationPathBuilder(output_dir=output_dir / "surfaces")
 surface_paths = surface_builder.build_all(
@@ -1754,12 +1546,11 @@ Check file existence early to fail fast.
 
 ```python
 # Pre-flight checks
-assert segmentation.exists(), f"Segmentation not found: {segmentation}"
 assert mesh_base.with_suffix(".pts").exists(), f"Mesh not found: {mesh_base}"
 assert labels_config.exists(), f"Labels config not found: {labels_config}"
 
 # Only then start workflow
-meshing_logic.run_meshing(paths=meshing_paths)
+refinement_logic.run_myocardium_postprocessing(paths=refinement_paths, ...)
 ```
 
 ### 3. Enable Detailed Logging
@@ -1786,14 +1577,13 @@ Recommended structure:
 /data/
 └── patient_001/
     ├── input/
-    │   ├── segmentation.nii.gz
     │   ├── source_labels.yaml
     │   └── target_labels.yaml
-    ├── meshing/
-    │   ├── 01_raw/
-    │   │   ├── heart_mesh.pts
-    │   │   ├── heart_mesh.elem
-    │   │   └── heart_mesh.vtk
+    ├── raw_mesh/              # produced upstream by pycemrg-meshing
+    │   ├── heart_mesh.pts
+    │   ├── heart_mesh.elem
+    │   └── heart_mesh.vtk
+    ├── refinement/
     │   ├── 02_refined/
     │   │   ├── myocardium_clean.pts
     │   │   ├── myocardium_clean.elem
@@ -1931,8 +1721,7 @@ ElemType.Ln  # Lines (connectivity columns 1,2)
 ### v1.0.0 (Current)
 - Initial public API
 - Core workflows:
-  - Volumetric meshing (meshtools3d)
-  - Mesh refinement and relabeling
+  - Mesh refinement and relabeling (myocardium extraction from a volumetric mesh)
   - Ventricular surface extraction for UVC
   - Atrial surface extraction
   - BiV and atrial submesh generation
@@ -1948,12 +1737,13 @@ ElemType.Ln  # Lines (connectivity columns 1,2)
 - `pycemrg` (core library)
 - `numpy`
 - `pyvista` (for VTK operations)
-- `SimpleITK` (for image I/O)
 
 ### Optional
-- `meshtools3d` binary (for volumetric meshing)
 - `meshtool` binary (for surface extraction and mesh operations)
 - CARPentry/openCARP installation (for fiber generation and simulations)
+
+### Upstream
+- `pycemrg-meshing` — generates the raw volumetric mesh this library consumes
 
 ---
 

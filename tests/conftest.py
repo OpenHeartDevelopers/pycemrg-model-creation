@@ -54,26 +54,3 @@ def test_meshtool_root() -> Path:
 
     return meshtool_path
 
-@pytest.fixture(scope="session")
-def test_m3d_root() -> Path:
-    """
-    User can set this to point to a custom Meshtools3D installation for testing.
-
-    PYCEMRG_MESHTOOLS3D_DIR environment variable can be used to specify the path.
-    """
-
-    m3d_path_str = os.environ.get("PYCEMRG_MESHTOOLS3D_DIR")
-
-    if not m3d_path_str:
-        pytest.skip(
-            "Skipping integration tests: PYCEMRG_MESHTOOLS3D_DIR environment variable not set."
-        )
-
-    m3d_path = Path(m3d_path_str)
-
-    if not m3d_path.is_dir():
-        pytest.fail(
-            f"PYCEMRG_MESHTOOLS3D_DIR path does not exist or is not a directory: {m3d_path}"
-        )
-
-    return m3d_path
