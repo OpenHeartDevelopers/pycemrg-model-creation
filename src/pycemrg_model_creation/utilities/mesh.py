@@ -574,3 +574,235 @@ def relabel_carp_elem_file(
 
     logger.info(f"Successfully wrote relabeled element file to {output_elem_path.name}")
 
+
+def read_vtx(vtx_path: Path, header_rows: int = 2) -> NDArray[np.int_]:
+    """
+    Reads a CARP .vtx file, returning the vertex indices.
+
+    The default of two header rows matches the file `write_vtx` produces: a count
+    line followed by a group keyword line (`intra`).
+
+    Args:
+        vtx_path: Path to the .vtx file.
+        header_rows: Number of leading lines to skip before the indices.
+
+    Returns:
+        A 1D array of vertex indices.
+    """
+    logger.info(f"Reading vtx file {vtx_path.name}")
+    return np.loadtxt(vtx_path, dtype=int, skiprows=header_rows, ndmin=1)
+
+
+def read_dat(dat_path: Path) -> NDArray[np.float64]:
+    """
+    Reads a CARP .dat file of per-node or per-element scalar values.
+
+    A .dat file carries no header, matching what `write_dat` produces.
+
+    Args:
+        dat_path: Path to the .dat file.
+
+    Returns:
+        An array of the values in file order.
+    """
+    logger.info(f"Reading dat file {dat_path.name}")
+    return np.loadtxt(dat_path, dtype=float, ndmin=1)
+
+
+def write_elem(
+    elements: NDArray[np.int_],
+    tags: NDArray[np.int_],
+    output_path: Path,
+    elem_type: ElemType = ElemType.Tt,
+) -> None:
+    """
+    Writes element connectivity and tags to a CARP .elem file.
+
+    Args:
+        elements: Array of shape (n_elements, n_nodes) of vertex indices.
+        tags: 1D array of n_elements integer region tags.
+        output_path: Path to the output .elem file.
+        elem_type: Element type determining the expected node count and row prefix.
+
+    Raises:
+        ValueError: If the connectivity width does not match `elem_type`, or if the
+            tag count does not match the element count.
+    """
+    expected_nodes = len(elem_type.value)
+    if elements.ndim != 2 or elements.shape[1] != expected_nodes:
+        raise ValueError(
+            f"{elem_type.name} elements must have shape (n, {expected_nodes}); "
+            f"got {elements.shape}."
+        )
+
+    tags = np.asarray(tags).ravel()
+    if tags.shape[0] != elements.shape[0]:
+        raise ValueError(
+            f"Tag count ({tags.shape[0]}) does not match element count "
+            f"({elements.shape[0]})."
+        )
+
+    rows = np.column_stack([elements, tags])
+    fmt = f"{elem_type.name}" + " %d" * (expected_nodes + 1)
+    np.savetxt(
+        output_path, rows, fmt=fmt, header=str(elements.shape[0]), comments=""
+    )
+    logger.info(f"Successfully wrote {elements.shape[0]} elements to {output_path}")
+
+
+def write_lon(fibres: NDArray[np.float64], output_path: Path) -> None:
+    """
+    Writes a fibre array to a CARP .lon file.
+
+    The .lon header is the number of direction vectors per element, not the number
+    of elements: 1 for fibre only, 2 for fibre plus sheet.
+
+    Args:
+        fibres: Array of shape (n_elements, 3) or (n_elements, 6).
+        output_path: Path to the output .lon file.
+
+    Raises:
+        ValueError: If the column count is not a multiple of three.
+    """
+    if fibres.ndim != 2 or fibres.shape[1] % 3 != 0:
+        raise ValueError(
+            f"Fibre array must have shape (n, 3k); got {fibres.shape}."
+        )
+
+    n_directions = fibres.shape[1] // 3
+    np.savetxt(
+        output_path, fibres, fmt="%.8f", header=str(n_directions), comments=""
+    )
+    logger.info(
+        f"Successfully wrote {n_directions}-direction fibres to {output_path}"
+    )
+
+
+def read_nod_eidx(index_path: Path, dtype: type = np.int64) -> NDArray[np.int_]:
+    """
+    Reads a binary CARP .nod or .eidx submesh index file.
+
+    These files map submesh node or element indices back onto the parent mesh.
+
+    The default dtype reproduces the original implementation's `dtype=int`, which
+    resolves to a 64-bit integer on macOS and Linux. This has not been verified
+    against a file emitted by meshtool; if indices come back implausible, a 32-bit
+    dtype is the first thing to try.
+
+    Args:
+        index_path: Path to the .nod or .eidx file.
+        dtype: Integer type the file was written with.
+
+    Returns:
+        A 1D array of parent-mesh indices.
+    """
+    logger.info(f"Reading binary index file {index_path.name}")
+    return np.fromfile(index_path, dtype=dtype, count=-1)
+
+
+def reindex_vtx(
+    vtx: NDArray[np.int_], vtx_surf: NDArray[np.int_]
+) -> NDArray[np.int_]:
+    """
+    Re-expresses vertex indices in the local numbering of a surface's vertex list.
+
+    Indices in `vtx` that do not appear in `vtx_surf` are dropped.
+
+    Args:
+        vtx: Vertex indices in the parent numbering.
+        vtx_surf: The surface's vertex list, defining the local numbering.
+
+    Returns:
+        The surviving indices, expressed as positions within `vtx_surf`.
+    """
+    common = np.intersect1d(vtx, vtx_surf)
+    order = np.argsort(vtx_surf)
+    positions = np.searchsorted(vtx_surf, common, sorter=order)
+    return order[positions]
+
+
+def reindex_surf(
+    vtx_surf: NDArray[np.int_], surf: NDArray[np.int_]
+) -> NDArray[np.int_]:
+    """
+    Re-expresses triangle connectivity in the local numbering of a vertex list.
+
+    Args:
+        vtx_surf: The surface's vertex list, defining the local numbering.
+        surf: Triangle connectivity of shape (n_triangles, 3) in parent numbering.
+
+    Returns:
+        Triangle connectivity of the same shape, in local numbering.
+
+    Raises:
+        ValueError: If any vertex referenced by `surf` is absent from `vtx_surf`.
+    """
+    order = np.argsort(vtx_surf)
+    positions = np.searchsorted(vtx_surf, surf, sorter=order)
+
+    if positions.max(initial=0) >= vtx_surf.shape[0]:
+        raise ValueError("Surface references a vertex absent from vtx_surf.")
+
+    reindexed = order[positions]
+    if not np.array_equal(vtx_surf[reindexed], surf):
+        raise ValueError("Surface references a vertex absent from vtx_surf.")
+
+    return reindexed
+
+
+def extract_points_by_vtx(
+    points: NDArray[np.float64], vtx: NDArray[np.int_]
+) -> NDArray[np.float64]:
+    """
+    Selects the subset of points named by a vertex index list.
+
+    Args:
+        points: Array of shape (n_points, 3).
+        vtx: 1D array of vertex indices into `points`.
+
+    Returns:
+        Array of shape (len(vtx), 3), in the order given by `vtx`.
+    """
+    return points[vtx, :]
+
+
+def read_neubc(neubc_path: Path) -> NDArray[np.int_]:
+    """
+    Reads a CARP .neubc Neumann boundary condition file.
+
+    Args:
+        neubc_path: Path to the .neubc file.
+
+    Returns:
+        An integer array of the first six columns.
+    """
+    logger.info(f"Reading neubc file {neubc_path.name}")
+    return np.loadtxt(
+        neubc_path, dtype=int, skiprows=1, usecols=(0, 1, 2, 3, 4, 5), ndmin=2
+    )
+
+
+def read_clipper(clipper_path: Path) -> Tuple[NDArray[np.float64], float]:
+    """
+    Reads a clipper geometry file and derives its centre and radius.
+
+    The radius is taken as the distance from the centroid to the first point, which
+    assumes the points lie on a circle.
+
+    Args:
+        clipper_path: Path to a VTK-readable clipper file.
+
+    Returns:
+        (centre, radius).
+    """
+    logger.info(f"Reading clipper file {clipper_path.name}")
+    points = np.asarray(pv.read(clipper_path).points, dtype=float)
+
+    if points.shape[0] == 0:
+        raise ValueError(f"Clipper file {clipper_path} contains no points.")
+
+    center = np.mean(points, axis=0)
+    radius = float(np.linalg.norm(points[0, :] - center))
+
+    return center, radius
+
