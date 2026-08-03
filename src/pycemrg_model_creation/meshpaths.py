@@ -109,6 +109,43 @@ class CarpMesh:
         """Element connectivity, binary."""
         return self._sibling(".belem")
 
+    # -- Role-named siblings --------------------------------------------
+
+    def role(self, name: str, extension: str) -> Path:
+        """
+        Build a role-named sibling: ``<stem>.<name><extension>``.
+
+        CARP and mguvc address boundary sets and derived surfaces by a role
+        slotted between the stem and the extension — ``BiV.base.vtx``,
+        ``BiV.rvsept.vtx``, ``BiV.lvfree_face.surf``. This is the mechanism
+        for building such a name. *Which* roles are legal belongs to the tool
+        that mandates them, not to this handle.
+
+        Args:
+            name: The role, without surrounding dots, e.g. "base", "rvsept",
+                  "lvfree_face".
+            extension: The extension, leading dot included, e.g. ".vtx".
+                       May itself be multi-part — ".surf.vtx" is a real one.
+
+        Example:
+            >>> mesh = CarpMesh("/data/BiV/BiV")
+            >>> mesh.role("base", ".vtx")
+            PosixPath('/data/BiV/BiV.base.vtx')
+            >>> mesh.role("epi", ".surf.vtx")
+            PosixPath('/data/BiV/BiV.epi.surf.vtx')
+        """
+        if not name or name.startswith("."):
+            raise ValueError(
+                f"Role name must be non-empty and carry no leading dot, got '{name}'. "
+                f"The separating dot is added for you."
+            )
+        if not extension.startswith("."):
+            raise ValueError(
+                f"Extension must start with a dot, got '{extension}'. "
+                f"Did you mean '.{extension}'?"
+            )
+        return self._sibling(f".{name}{extension}")
+
     # -- Internals ------------------------------------------------------
 
     def _sibling(self, extension: str) -> Path:
