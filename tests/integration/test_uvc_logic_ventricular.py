@@ -12,7 +12,9 @@ from pathlib import Path
 
 from pycemrg.system import CarpRunner, CommandRunner
 from pycemrg_model_creation.logic import UvcLogic, ModelCreationPathBuilder
+from pycemrg_model_creation.meshpaths import CarpMesh
 from pycemrg_model_creation.tools import CarpWrapper
+from pycemrg_model_creation.tools.mguvc import boundary_inputs, outputs_for
 from pycemrg.data import LabelManager
 
 
@@ -49,17 +51,20 @@ def test_ventricular_uvc_calculation(test_data_root, carp_wrapper, tmp_path):
             ├── input_mesh/
             │   ├── BiV.pts              # BiV submesh
             │   ├── BiV.elem
-            │   ├── base.vtx             # Standard named VTX files
-            │   ├── epi.vtx
-            │   ├── lvendo.vtx
-            │   ├── rvendo.vtx
-            │   ├── rvsept.vtx
-            │   └── rvendo_nosept.vtx
+            │   ├── BiV.base.vtx         # the four boundary sets mguvc reads,
+            │   ├── BiV.lvendo.vtx       # stem-prefixed, in the mesh's own
+            │   ├── BiV.rvendo.vtx       # directory
+            │   └── BiV.rvsept.vtx
             └── outputs/                 # Optional expected outputs
                 ├── BiV.uvc_z.dat
                 ├── BiV.uvc_rho.dat
                 ├── BiV.uvc_phi.dat
                 └── BiV.uvc_ven.dat
+
+    input_mesh/ also holds BiV.epi.vtx, BiV.lvepi.vtx and BiV.rvendo_nosept.vtx.
+    mguvc never opens them — it derives those surfaces itself — so this test
+    deliberately copies only the four that `boundary_inputs` names. If mguvc
+    succeeds without them, the four-file claim holds end to end.
     """
     # Setup test directories
     test_case_dir = test_data_root / "ventricular_uvc"
@@ -81,15 +86,18 @@ def test_ventricular_uvc_calculation(test_data_root, carp_wrapper, tmp_path):
     
     logging.info(f"Loaded tags: LV={lv_tag}, RV={rv_tag}")
     
-    # Copy mesh and VTX files into tmp_path so mguvc runs in an isolated,
-    # clean directory and never touches the source test data.
+    # Copy the mesh and the four boundary VTX files into tmp_path so mguvc
+    # runs in an isolated, clean directory and never touches the source data.
     work_dir = tmp_path / "BiV"
     work_dir.mkdir()
-    for suffix in (".pts", ".elem"):
-        src = input_mesh_dir / f"BiV{suffix}"
-        assert src.exists(), f"BiV mesh not found: {src}"
-        shutil.copy(src, work_dir / src.name)
-    for vtx_file in input_mesh_dir.glob("*.vtx"):
+
+    source_mesh = CarpMesh(input_mesh_dir / "BiV")
+    for mesh_file in (source_mesh.pts, source_mesh.elem):
+        assert mesh_file.exists(), f"BiV mesh not found: {mesh_file}"
+        shutil.copy(mesh_file, work_dir / mesh_file.name)
+
+    for boundary, vtx_file in boundary_inputs(source_mesh).items():
+        assert vtx_file.exists(), f"Missing {boundary.value} VTX: {vtx_file}"
         shutil.copy(vtx_file, work_dir / vtx_file.name)
 
     biv_mesh = work_dir / "BiV"
@@ -111,26 +119,27 @@ def test_ventricular_uvc_calculation(test_data_root, carp_wrapper, tmp_path):
         np=1
     )
     
-    # Validate outputs exist
+    # Validate outputs exist. Names come from the wrapper that knows mguvc,
+    # not from the contract — the contract no longer restates them.
     logging.info("Validating outputs...")
-    assert uvc_paths.uvc_z.exists(), f"UVC Z not generated: {uvc_paths.uvc_z}"
-    assert uvc_paths.uvc_rho.exists(), f"UVC Rho not generated: {uvc_paths.uvc_rho}"
-    assert uvc_paths.uvc_phi.exists(), f"UVC Phi not generated: {uvc_paths.uvc_phi}"
-    assert uvc_paths.uvc_ven.exists(), f"UVC Ven not generated: {uvc_paths.uvc_ven}"
-    
+    outputs = outputs_for(uvc_paths.biv_mesh, uvc_paths.output_dir)
+
+    assert outputs.uvc_z.exists(), f"UVC Z not generated: {outputs.uvc_z}"
+    assert outputs.uvc_rho.exists(), f"UVC Rho not generated: {outputs.uvc_rho}"
+    assert outputs.uvc_phi.exists(), f"UVC Phi not generated: {outputs.uvc_phi}"
+    assert outputs.uvc_ven.exists(), f"UVC Ven not generated: {outputs.uvc_ven}"
+
     # Validate files are non-empty
-    assert uvc_paths.uvc_z.stat().st_size > 0, "UVC Z is empty"
-    assert uvc_paths.uvc_rho.stat().st_size > 0, "UVC Rho is empty"
-    assert uvc_paths.uvc_phi.stat().st_size > 0, "UVC Phi is empty"
-    assert uvc_paths.uvc_ven.stat().st_size > 0, "UVC Ven is empty"
-    
+    for coordinate in outputs.coordinates:
+        assert coordinate.stat().st_size > 0, f"{coordinate.name} is empty"
+
     # Validate coordinate ranges
     def read_dat_file(path):
         """Read CARP .dat file as numpy array."""
         return np.loadtxt(path)
-    
-    uvc_z_data = read_dat_file(uvc_paths.uvc_z)
-    uvc_rho_data = read_dat_file(uvc_paths.uvc_rho)
+
+    uvc_z_data = read_dat_file(outputs.uvc_z)
+    uvc_rho_data = read_dat_file(outputs.uvc_rho)
     
     logging.info(f"UVC Z range: [{uvc_z_data.min():.3f}, {uvc_z_data.max():.3f}]")
     logging.info(f"UVC Rho range: [{uvc_rho_data.min():.3f}, {uvc_rho_data.max():.3f}]")

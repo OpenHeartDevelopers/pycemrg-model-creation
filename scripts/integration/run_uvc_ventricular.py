@@ -14,12 +14,14 @@ Expected test data layout:
         config/labels.yaml
         input_mesh/BiV.pts
         input_mesh/BiV.elem
-        input_mesh/base.vtx
-        input_mesh/epi.vtx
-        input_mesh/lvendo.vtx
-        input_mesh/rvendo.vtx
-        input_mesh/rvsept.vtx
-        input_mesh/rvendo_nosept.vtx
+        input_mesh/BiV.base.vtx
+        input_mesh/BiV.lvendo.vtx
+        input_mesh/BiV.rvendo.vtx
+        input_mesh/BiV.rvsept.vtx
+
+Those four boundary sets are all mguvc reads. It derives epi, lvepi,
+rvendo_nosept, rvjunc and tissue itself; files of those names may sit beside
+the mesh and are ignored.
 """
 
 import logging
