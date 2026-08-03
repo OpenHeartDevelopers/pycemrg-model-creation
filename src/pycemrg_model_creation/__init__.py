@@ -10,10 +10,12 @@ from . import utilities
 
 # Elevate the most important user-facing classes for convenience
 from .config import TagsConfig
+from .meshpaths import CarpMesh
 from .logic import SurfaceLogic
 from .tools import CarpWrapper, MeshtoolWrapper
 
 __all__ = [
+    "CarpMesh",
     "TagsConfig",
     "SurfaceLogic",
     "CarpWrapper",
