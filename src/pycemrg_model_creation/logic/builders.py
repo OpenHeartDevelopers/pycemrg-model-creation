@@ -1,11 +1,10 @@
 # src/pycemrg_model_creation/logic/builders.py
 
-import shutil
-import logging 
+import logging
 from pathlib import Path
-from datetime import datetime
 from typing import List, Union
 
+from ..meshpaths import CarpMesh
 from .contracts import (
     MeshPostprocessingPaths,
     VentricularSurfacePaths,
@@ -219,114 +218,54 @@ class ModelCreationPathBuilder:
     
     def build_ventricular_uvc_paths(
         self,
-        biv_mesh: Path,
+        biv_mesh: Union[CarpMesh, Path, str],
         output_subdir: str = "uvc",
-        overwrite_existing: bool = True,
-        backup_existing: bool = True,
     ) -> VentricularUVCPaths:
         """
-        Build path contract for ventricular UVC calculation.
+        Build the path contract for ventricular UVC calculation.
 
-        Constructs the VentricularUVCPaths contract for running mguvc on a BiV mesh.
+        Encodes the two naming conventions this library chooses, and nothing
+        else: the UVC outputs go in a subdirectory beside the mesh, and the
+        etags script sits next to the mesh rather than inside that
+        subdirectory.
 
-        **CRITICAL REQUIREMENT:**
-        Before calling mguvc, VTX files must be copied/moved to the same directory 
-        as the BiV mesh with standard names:
-        - base.vtx, epi.vtx, lvendo.vtx, rvendo.vtx, rvsept.vtx, rvendo_nosept.vtx
+        The etags location is deliberate. mguvc prompts interactively if its
+        --output-dir already exists, and that prompt cannot reach a user of
+        this library, so nothing may create that directory ahead of the run.
 
-        This builder creates the path contract but does NOT move the files.
-        The UvcLogic layer is responsible for ensuring files are in the correct location.
-
-        Directory structure expected:
-            biv_mesh.parent/          # e.g., /surfaces_uvc/BiV/
-            ├── BiV.pts               # BiV mesh
-            ├── BiV.elem
-            ├── base.vtx              # Standard named VTX files
-            ├── epi.vtx
-            ├── lvendo.vtx
-            ├── rvendo.vtx
-            ├── rvsept.vtx
-            ├── rvendo_nosept.vtx
-            └── uvc/                  # Output directory
-                ├── BiV.etags.sh
-                ├── BiV.uvc_z.dat
-                └── ...
+        Boundary inputs and outputs are not stored. Ask for them:
+        `tools.mguvc.boundary_inputs(paths.biv_mesh)` and
+        `tools.mguvc.outputs_for(paths.biv_mesh, paths.output_dir)`.
 
         Args:
-            biv_mesh: BiV submesh base path (without extension)
-                      e.g., /surfaces_uvc/BiV/BiV
-            output_subdir: Subdirectory name for UVC outputs (default: "uvc")
+            biv_mesh: BiV submesh stem, without extension, e.g.
+                      /data/surfaces_uvc/BiV/BiV. Its directory must also hold
+                      the four boundary VTX files mguvc reads.
+            output_subdir: Name of the UVC output directory, created beside
+                           the mesh by mguvc itself.
 
         Returns:
-            Complete VentricularUVCPaths contract
+            A VentricularUVCPaths contract.
+
+        Note:
+            Pure construction — no directory is created, moved or removed.
+            Clearing a stale output directory before a run belongs to
+            UvcLogic, which knows when the run actually happens.
 
         Example:
             >>> builder = ModelCreationPathBuilder(output_dir=Path("/data/surfaces"))
-            >>> 
-            >>> uvc_paths = builder.build_ventricular_uvc_paths(
-            ...     biv_mesh=Path("/data/surfaces/BiV/BiV"),
-            ...     output_subdir="uvc"
+            >>> paths = builder.build_ventricular_uvc_paths(
+            ...     biv_mesh=Path("/data/surfaces/BiV/BiV")
             ... )
+            >>> paths.output_dir
+            PosixPath('/data/surfaces/BiV/uvc')
         """
-        # BiV mesh directory (where VTX files must be placed)
-        biv_mesh_dir = biv_mesh.parent
-        mesh_basename = biv_mesh.name # e.g., "BiV", can't have extension
-
-        uvc_dir = biv_mesh_dir / output_subdir
-        # Handle existing directory
-        if uvc_dir.exists():
-            if backup_existing:
-                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-                backup_dir = biv_mesh_dir / f"{output_subdir}_backup_{timestamp}"
-                logger.info(f"Backing up existing directory: {uvc_dir} → {backup_dir}")
-                shutil.move(str(uvc_dir), str(backup_dir))
-            elif overwrite_existing:
-                logger.warning(f"Removing existing directory: {uvc_dir}")
-                shutil.rmtree(uvc_dir)
-            else:
-                raise FileExistsError(
-                    f"Output directory already exists: {uvc_dir}\n"
-                    f"Use overwrite_existing=True to remove or backup_existing=True to backup"
-                )
-
-        # etags file lives alongside the mesh, not inside output_dir.
-        # This avoids pre-creating output_dir, which would cause mguvc to
-        # prompt interactively when it finds the directory already exists.
-        etags_file = biv_mesh_dir / f"{mesh_basename}.etags.sh"
+        mesh = biv_mesh if isinstance(biv_mesh, CarpMesh) else CarpMesh(biv_mesh)
 
         return VentricularUVCPaths(
-            # Input: BiV submesh
-            biv_mesh=biv_mesh,
-
-            # Input: VTX files (MUST be in biv_mesh.parent with standard names)
-            base_vtx=biv_mesh_dir / f"{mesh_basename}.base.vtx",
-            epi_vtx=biv_mesh_dir / f"{mesh_basename}.epi.vtx",
-            lv_endo_vtx=biv_mesh_dir / f"{mesh_basename}.lvendo.vtx",
-            rv_endo_vtx=biv_mesh_dir / f"{mesh_basename}.rvendo.vtx",
-            septum_vtx=biv_mesh_dir / f"{mesh_basename}.rvsept.vtx",
-            rvendo_nosept_vtx=biv_mesh_dir / f"{mesh_basename}.rvendo_nosept.vtx",
-
-            # Input: etags configuration
-            etags_file=etags_file,
-
-            # Output directory
-            output_dir=uvc_dir,
-
-            # Primary UVC outputs (use mesh basename)
-            uvc_z=uvc_dir / f"{mesh_basename}.uvc_z.dat",
-            uvc_rho=uvc_dir / f"{mesh_basename}.uvc_rho.dat",
-            uvc_phi=uvc_dir / f"{mesh_basename}.uvc_phi.dat",
-            uvc_ven=uvc_dir / f"{mesh_basename}.uvc_ven.dat",
-
-            # Intermediate Laplace solutions
-            sol_apba=uvc_dir / f"{mesh_basename}.sol_apba_lap.dat",
-            sol_endoepi=uvc_dir / f"{mesh_basename}.sol_endoepi_lap.dat",
-            sol_lvendo=uvc_dir / f"{mesh_basename}.sol_lvendo_lap.dat",
-            sol_rvendo=uvc_dir / f"{mesh_basename}.sol_rvendo_lap.dat",
-
-            # Mapping files
-            aff_dat=uvc_dir / f"{mesh_basename}.aff.dat",
-            m2s_dat=uvc_dir / f"{mesh_basename}.m2s.dat"
+            biv_mesh=mesh,
+            output_dir=mesh.directory / output_subdir,
+            etags_file=mesh.role("etags", ".sh"),
         )
 
     def build_all(

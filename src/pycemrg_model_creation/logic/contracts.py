@@ -4,6 +4,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import List
 
+from ..meshpaths import CarpMesh
+
 @dataclass
 class MeshPostprocessingPaths:
     """Path contract for the mesh post-processing workflow."""
@@ -148,55 +150,35 @@ class UVCSurfaceExtractionPaths:
 @dataclass(frozen=True)
 class VentricularUVCPaths:
     """
-    Path contract for ventricular UVC (Universal Ventricular Coordinate) calculation.
-    
-    All paths are explicit. The logic layer never derives paths.
-    
-    CRITICAL: mguvc expects the BiV mesh and all VTX boundary files to be in 
-    the SAME directory with these exact standard names:
-    - base.vtx, epi.vtx, lvendo.vtx, rvendo.vtx, rvsept.vtx, rvendo_nosept.vtx
-    
-    The workflow:
-    1. BiV mesh is extracted from four-chamber mesh
-    2. VTX files are mapped from four-chamber to BiV space
-    3. Both mesh and VTX files are placed in the same directory
-    4. mguvc reads from that directory and writes outputs to output_dir
+    Path contract for ventricular UVC (Universal Ventricular Coordinate)
+    calculation.
+
+    Three fields, because three is how many choices mguvc actually leaves the
+    caller: which mesh, where the outputs go, and where the etags script is
+    written. Everything else is a function of those and is asked for rather
+    than stored:
+
+    - boundary inputs — ``tools.mguvc.boundary_inputs(biv_mesh)``
+    - outputs — ``tools.mguvc.outputs_for(biv_mesh, output_dir)``
+
+    Storing derived names here is what let this contract and the validator
+    disagree about them in the past. Ask; do not restate.
+
+    mguvc reads four boundary VTX files from the mesh's own directory,
+    stem-prefixed (``BiV.base.vtx``). It writes everything under
+    ``output_dir`` and nothing beside the mesh.
     """
-    # Input: BiV submesh (extracted from four-chamber mesh)
-    # Path WITHOUT extension (e.g., /data/surfaces_uvc/BiV/BiV)
-    # The directory must contain: BiV.pts, BiV.elem, and all VTX files
-    biv_mesh: Path
-    
-    # Input: Boundary condition VTX files (for validation only)
-    # These MUST exist in biv_mesh.parent with standard names
-    # Listed here for explicit validation in logic layer
-    base_vtx: Path          # biv_mesh.parent / "base.vtx"
-    epi_vtx: Path           # biv_mesh.parent / "epi.vtx"
-    lv_endo_vtx: Path       # biv_mesh.parent / "lvendo.vtx"
-    rv_endo_vtx: Path       # biv_mesh.parent / "rvendo.vtx"
-    septum_vtx: Path        # biv_mesh.parent / "rvsept.vtx"
-    rvendo_nosept_vtx: Path # biv_mesh.parent / "rvendo_nosept.vtx"
-    
-    # Input: Element tags configuration (bash script with T_LV, T_RV definitions)
-    etags_file: Path
-    
-    # Output directory for UVC coordinate files
-    # Typically: biv_mesh.parent / "uvc"
+
+    # Input: BiV submesh extracted from the four-chamber mesh. Its directory
+    # must also hold the four boundary VTX files.
+    biv_mesh: CarpMesh
+
+    # Output: directory for the UVC coordinate files. Must not exist when
+    # mguvc runs — mguvc prompts interactively if it does.
     output_dir: Path
-    
-    # Output: Primary UVC coordinate files (CARP .dat format)
-    # All use biv_mesh.name as basename (e.g., BiV.uvc_z.dat)
-    uvc_z: Path           # Apico-basal coordinate (apex=0, base=1)
-    uvc_rho: Path         # Transmural coordinate (endo=0, epi=1)
-    uvc_phi: Path         # Rotational coordinate
-    uvc_ven: Path         # Ventricular identifier (LV vs RV)
-    
-    # Output: Intermediate Laplace solutions (for debugging/validation)
-    sol_apba: Path        # Apico-basal Laplace solution
-    sol_endoepi: Path     # Endo-epi Laplace solution
-    sol_lvendo: Path      # LV endo Laplace solution
-    sol_rvendo: Path      # RV endo Laplace solution
-    
-    # Output: Mapping files
-    aff_dat: Path         # Affine transformation data
-    m2s_dat: Path         # Mesh-to-surface mapping
+
+    # Input: element-tags script (bash, T_LV/T_RV definitions) written by this
+    # library and passed to mguvc as --tags-file. Explicit because the
+    # location is the caller's to choose, not mguvc's to mandate; it is put
+    # beside the mesh so that output_dir is not created early.
+    etags_file: Path

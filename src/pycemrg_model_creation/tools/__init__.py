@@ -6,5 +6,14 @@ CARPentry command-line tools.
 """
 
 from .wrappers import CarpWrapper, MeshtoolWrapper, DEFAULT_FIBRE_ANGLES
+from .mguvc import MguvcOutputs, UvcBoundary, boundary_inputs, outputs_for
 
-__all__ = ["CarpWrapper", "MeshtoolWrapper", "DEFAULT_FIBRE_ANGLES"]
+__all__ = [
+    "CarpWrapper",
+    "MeshtoolWrapper",
+    "DEFAULT_FIBRE_ANGLES",
+    "MguvcOutputs",
+    "UvcBoundary",
+    "boundary_inputs",
+    "outputs_for",
+]

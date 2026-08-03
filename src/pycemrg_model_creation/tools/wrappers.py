@@ -242,9 +242,13 @@ class CarpWrapper:
         Executes the mguvc tool from CARPentry to solve Laplace problems
         that define the ventricular coordinate system.
 
-        **CRITICAL:** VTX boundary files must exist in model_name.parent with
-        standard names: base.vtx, epi.vtx, lvendo.vtx, rvendo.vtx, 
-        rvsept.vtx, rvendo_nosept.vtx
+        **CRITICAL:** Four VTX boundary files must exist in model_name.parent,
+        stem-prefixed with the mesh basename: {basename}.base.vtx,
+        {basename}.lvendo.vtx, {basename}.rvendo.vtx, {basename}.rvsept.vtx.
+        See `tools.mguvc.UvcBoundary`, which is the single source for these.
+
+        mguvc derives epi, lvepi, rvendo_nosept, rvjunc and tissue itself and
+        never reads files of those names, even when they are present.
 
         Args:
             model_name: Full path to BiV mesh base (without extension)
@@ -274,19 +278,19 @@ class CarpWrapper:
             - {basename}.sol_*_lap.dat - Laplace solutions (if laplace_solution=True)
             - {basename}.aff.dat - Affine transformation
             - {basename}.m2s.dat - Mesh-to-surface mapping
+        Roughly 75 files are written in total; `tools.mguvc.outputs_for` names
+        the ones this library consumes.
 
         Example:
             >>> # Directory structure:
             >>> # /surfaces_uvc/BiV/
             >>> #   ├── BiV.pts
             >>> #   ├── BiV.elem
-            >>> #   ├── base.vtx
-            >>> #   ├── epi.vtx
-            >>> #   ├── lvendo.vtx
-            >>> #   ├── rvendo.vtx
-            >>> #   ├── rvsept.vtx
-            >>> #   └── rvendo_nosept.vtx
-            >>> 
+            >>> #   ├── BiV.base.vtx
+            >>> #   ├── BiV.lvendo.vtx
+            >>> #   ├── BiV.rvendo.vtx
+            >>> #   └── BiV.rvsept.vtx
+            >>>
             >>> carp_wrapper.run_mguvc(
             ...     model_name=Path("/surfaces_uvc/BiV/BiV"),
             ...     input_model_type="biv",
