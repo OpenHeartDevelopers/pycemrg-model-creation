@@ -4,8 +4,8 @@ import logging
 from pathlib import Path
 from typing import List, Union
 
-from ..meshpaths import CarpMesh
-from .contracts import (
+from pycemrg_model_creation.meshpaths import CarpMesh
+from pycemrg_model_creation.logic.contracts import (
     MeshPostprocessingPaths,
     VentricularSurfacePaths,
     AtrialSurfacePaths,
@@ -22,52 +22,65 @@ class RefinementPathBuilder:
     Builds path contracts for the mesh refinement workflow.
 
     This builder is initialized with a single root output directory and
-    constructs the subdirectories and file paths needed for
-    post-processing/refinement (RefinementLogic).
+    names the subdirectories and files needed for post-processing/refinement
+    (RefinementLogic).
+
+    Naming only: nothing here touches the file system. The directories are
+    created by ``RefinementLogic`` at the start of a run, so that building a
+    contract in order to inspect it has no side effect on disk.
 
     The raw volumetric mesh is an input, produced upstream of this library,
-    so the builder does not own or create a directory for it.
+    so the builder does not own or name a directory for it.
     """
 
-    def __init__(self, output_dir: Union[Path, str]):
+    def __init__(
+        self,
+        output_dir: Union[Path, str],
+        refined_subdir: str = "refined",
+    ):
         """
         Initializes the builder with a main output directory for all
         refinement-related activities.
 
         Args:
             output_dir: The root directory for refinement outputs.
+            refined_subdir: Name of the subdirectory holding the refined mesh.
+                            Earlier workflows used "02_refined", pass it here
+                            to preserve that behaviour.
         """
         self.root_output_dir = Path(output_dir)
 
-        # Define and create structured subdirectories
-        self.refined_mesh_dir = self.root_output_dir / "02_refined"
+        # Define the structured subdirectories. Not created here.
+        self.refined_mesh_dir = self.root_output_dir / refined_subdir
         self.tmp_dir = self.root_output_dir / "tmp"
-
-        for d in [self.refined_mesh_dir, self.tmp_dir]:
-            d.mkdir(parents=True, exist_ok=True)
 
     def build_postprocessing_paths(
         self,
-        input_mesh_base: Path,
+        input_mesh_base: Union[CarpMesh, Path, str],
         refined_mesh_basename: str = "myocardium_clean"
     ) -> MeshPostprocessingPaths:
         """
         Constructs the MeshPostprocessingPaths contract for the refinement workflow.
 
         Args:
-            input_mesh_base: The base path of the raw volumetric mesh to be
-                             processed (produced upstream of this library).
+            input_mesh_base: The raw volumetric mesh to be processed (produced
+                             upstream of this library), as a CarpMesh or as the
+                             stem to build one from. Passing a path that still
+                             carries a mesh extension is an error, and CarpMesh
+                             says so.
             refined_mesh_basename: The base name for the final, refined mesh.
 
         Returns:
             A fully populated MeshPostprocessingPaths dataclass instance.
         """
+        # CarpMesh normalises str, Path and CarpMesh alike -- it is os.PathLike,
+        # so re-wrapping one that is already a handle is a no-op.
         return MeshPostprocessingPaths(
-            input_mesh_base=input_mesh_base,
-            output_dir=self.refined_mesh_dir,
-            tmp_dir=self.tmp_dir,
-            intermediate_myocardium_mesh=self.tmp_dir / "myocardium_intermediate",
-            output_mesh_base=self.refined_mesh_dir / refined_mesh_basename,
+            input_mesh_base=CarpMesh(input_mesh_base),
+            intermediate_myocardium_mesh=CarpMesh(
+                self.tmp_dir / "myocardium_intermediate"
+            ),
+            output_mesh_base=CarpMesh(self.refined_mesh_dir / refined_mesh_basename),
         )
 
 class ModelCreationPathBuilder:

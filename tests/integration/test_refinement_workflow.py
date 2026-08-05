@@ -10,6 +10,7 @@ from pycemrg_model_creation.logic import (
     RefinementLogic,
     RefinementPathBuilder,
 )
+from pycemrg_model_creation.meshpaths import CarpMesh
 from pycemrg_model_creation.tools import MeshtoolWrapper
 
 
@@ -31,7 +32,7 @@ def test_myocardium_refinement_workflow(
     logging.info(f"Detailed logs for this test run are in: {log_file}")
 
     sample_case_dir = test_data_root / "meshing_and_refinement"
-    raw_mesh_base = sample_case_dir / "golden_mesh_input/heart_mesh"
+    raw_mesh_base = CarpMesh(sample_case_dir / "golden_mesh_input/heart_mesh")
 
     source_labels_path = sample_case_dir / "config/source_labels.yaml"
     target_labels_path = sample_case_dir / "config/target_labels.yaml"
@@ -39,8 +40,8 @@ def test_myocardium_refinement_workflow(
     output_dir = tmp_path / "test_output"
 
     # --- Pre-condition Checks ---
-    assert raw_mesh_base.with_suffix(".pts").exists(), (
-        f"Raw input mesh not found at {raw_mesh_base}.pts"
+    assert raw_mesh_base.pts.exists(), (
+        f"Raw input mesh not found at {raw_mesh_base.pts}"
     )
     assert source_labels_path.exists(), (
         f"Labels config not found at {source_labels_path}"
@@ -79,9 +80,12 @@ def test_myocardium_refinement_workflow(
     )
 
     # --- 6. Final Validation ---
-    final_mesh_path = refinement_paths.output_mesh_base
-    assert final_mesh_path.with_suffix(".pts").exists()
-    assert final_mesh_path.with_suffix(".elem").exists()
+    # Ask the handle for the family; with_suffix is banned here because it
+    # replaces the final dot-segment rather than appending to it.
+    final_mesh = refinement_paths.output_mesh_base
+    assert final_mesh.pts.exists()
+    assert final_mesh.elem.exists()
+    assert final_mesh.vtk.exists()
 
     logging.info("Refinement workflow completed. Final mesh created.")
     logging.info("--- Integration test PASSED ---")

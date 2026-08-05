@@ -6,26 +6,45 @@ from typing import List
 
 from ..meshpaths import CarpMesh
 
-@dataclass
+@dataclass(frozen=True)
 class MeshPostprocessingPaths:
-    """Path contract for the mesh post-processing workflow."""
+    """
+    Path contract for the mesh post-processing (refinement) workflow.
+
+    Every field that is really a *mesh* is a ``CarpMesh`` handle rather than a
+    bare stem, so the extensions are asked of the handle (``mesh.pts``,
+    ``mesh.elem``) instead of being reattached by each caller with
+    ``with_suffix`` — which truncates dotted stems and is banned here.
+
+    Note the wrapper boundary: ``MeshtoolWrapper`` takes plain ``Path`` stems
+    and builds its own expected-output names, so the logic layer passes
+    ``mesh.stem`` when it calls a wrapper and uses the handle everywhere else.
+    """
 
     # Input
-    # Base path to a raw volumetric mesh (e.g., .../heart_mesh), produced
-    # upstream of this library.
-    input_mesh_base: Path
+    # Raw volumetric mesh (e.g. .../heart_mesh), produced upstream of this
+    # library. Its .lon is frequently absent; meshtool fabricates default
+    # [1 0 0] fibres when it is, which is expected, not an error.
+    input_mesh_base: CarpMesh
 
-    # Directories
-    output_dir: Path
-    tmp_dir: Path
+    # Intermediate mesh (in tmp_dir): the myocardium after tag extraction and
+    # before optional simplification. Load-bearing rather than scratch — it is
+    # the simplify input when simplification runs, and both the relabel input
+    # and the copy source when it is skipped.
+    intermediate_myocardium_mesh: CarpMesh
 
-    # Intermediate mesh (in tmp_dir)
-    # The mesh after extracting myocardium tags, before optional simplification
-    intermediate_myocardium_mesh: Path
+    # Final output mesh (in output_dir): the cleaned, relabelled mesh.
+    output_mesh_base: CarpMesh
 
-    # Final output mesh (in output_dir)
-    # The final, cleaned, and relabeled mesh base name
-    output_mesh_base: Path
+    @property
+    def output_dir(self) -> Path: 
+        """Directory holding the refined mesh. The output mesh's own directory."""
+        return self.output_mesh_base.directory
+
+    @property
+    def tmp_dir(self) -> Path:
+        """Temporary directory for intermediate files. The intermediate mesh's own directory."""
+        return self.intermediate_myocardium_mesh.directory
 
 @dataclass
 class VentricularSurfacePaths:
