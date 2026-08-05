@@ -1,6 +1,8 @@
 # src/pycemrg_model_creation/utilities/geometry.py
 
 import logging
+import warnings
+
 import numpy as np
 
 from pathlib import Path
@@ -51,11 +53,21 @@ def compute_mesh_region_cog(
     return mesh_region_cog
 
 
-def identify_surface_orientation(
+def outward_normal_fraction(
     pts: np.ndarray, surf: np.ndarray, reference_point: np.ndarray
 ) -> float:
     """
-    Determine if surface normals point outward from reference point.
+    Fraction of a surface's triangles whose normals point away from a reference.
+
+    This measures; it does not classify. Callers apply whatever threshold and
+    comparison their question needs — a closed surface enclosing the reference
+    tends toward 0.0, one facing away from it toward 1.0 — and different
+    anatomical questions legitimately want different cut-offs. Keep it that
+    way: a threshold baked in here would be wrong for the next caller.
+
+    A triangle counts as outward when the vector from its first vertex to the
+    reference point opposes the triangle normal. Triangles whose dot product is
+    exactly zero — degenerate or exactly edge-on — count as *not* outward.
 
     Args:
         pts: Nx3 array of surface points
@@ -85,4 +97,23 @@ def identify_surface_orientation(
 
     outward_fraction = np.sum(is_outward) / surf.shape[0]
     return outward_fraction
+
+
+def identify_surface_orientation(
+    pts: np.ndarray, surf: np.ndarray, reference_point: np.ndarray
+) -> float:
+    """
+    Deprecated alias for :func:`outward_normal_fraction`.
+
+    The old name reads as though it classifies a surface, when it returns a
+    ratio and leaves the classifying to the caller. Behaviour is unchanged.
+    """
+    warnings.warn(
+        "identify_surface_orientation is deprecated; use outward_normal_fraction. "
+        "It returns a fraction rather than an orientation, and the caller applies "
+        "its own threshold. Behaviour is identical.",
+        DeprecationWarning,
+        stacklevel=2,
+    )
+    return outward_normal_fraction(pts, surf, reference_point)
 

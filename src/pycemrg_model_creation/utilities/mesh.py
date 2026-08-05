@@ -9,6 +9,9 @@ from pathlib import Path
 from typing import List, Dict, Tuple
 from enum import Enum
 
+from ..meshpaths import CarpMesh
+from .geometry import outward_normal_fraction
+
 logger = logging.getLogger(__name__)
 
 
@@ -476,10 +479,19 @@ def identify_epi_from_endo(
     """
     Identifies epicardial and endocardial surfaces from two mesh components.
 
-    The method assumes the epicardium is the outer surface. It calculates the
-    surface normals for one component and checks their orientation relative to the
-    component's center of gravity (CoG). If the majority of normals point inward
-    (towards the CoG), it is classified as the epicardium.
+    The method assumes the epicardium is the outer surface. It measures the
+    first component's normals against that component's *own* centre of gravity:
+    if the majority point inward, toward the CoG, it is the epicardium.
+
+    The measuring is delegated to
+    :func:`..geometry.outward_normal_fraction`, which is the single
+    implementation of this calculation. That function returns the *outward*
+    fraction, so the test here is inverted — "mostly inward" is
+    ``outward_fraction < 0.5``. Note the reference point: passing the
+    component's own centroid asks about winding order, which is a different
+    question from passing an anatomical landmark, and is why this is not
+    interchangeable with the ventricular surface classification in
+    ``logic/surfaces.py``.
 
     Args:
         component1_base_path: The base path to the first connected component
@@ -494,33 +506,18 @@ def identify_epi_from_endo(
         f"and {component2_base_path.name}"
     )
 
-    # Analyze the first component to determine its identity
-    points = read_pts(component1_base_path.with_suffix(".pts"))
-    cells = read_elem(component1_base_path.with_suffix(".elem"), elem_type=ElemType.Tr)
+    # A handle, not with_suffix: these stems are '.partN' from
+    # `meshtool extract unreachable`, and with_suffix would eat the '.part0'.
+    component1 = CarpMesh(component1_base_path)
+    points = read_pts(component1.pts)
+    cells = read_elem(component1.elem, elem_type=ElemType.Tr)
 
     center_of_gravity = np.mean(points, axis=0)
+    outward_fraction = outward_normal_fraction(points, cells, center_of_gravity)
 
-    # --- Vectorized Normal Calculation ---
-    v0 = points[cells[:, 1]] - points[cells[:, 0]]
-    v1 = points[cells[:, 2]] - points[cells[:, 0]]
-    normals = np.cross(v0, v1)
-
-    # Normalize the normal vectors to unit length
-    norms_magnitude = np.linalg.norm(normals, axis=1, keepdims=True)
-    normals_normalized = np.divide(normals, norms_magnitude, where=norms_magnitude != 0)
-
-    # Vector from a vertex on each triangle to the center of gravity
-    vertex_to_cog = center_of_gravity - points[cells[:, 0]]
-
-    # Dot product for all triangles at once. A positive dot product means the
-    # normal and the vector to the CoG are in the same general direction
-    # (i.e., the normal points inward), which is characteristic of an outer surface.
-    dot_products = np.sum(normals_normalized * vertex_to_cog, axis=1)
-
-    inward_pointing_ratio = np.mean(dot_products > 0)
-
-    # The original code used a 0.7 threshold, but >0.5 is sufficient
-    if inward_pointing_ratio > 0.5:
+    # The original code used a 0.7 threshold on the inward ratio; >0.5 is
+    # sufficient, and inverts to <0.5 on the outward fraction returned above.
+    if outward_fraction < 0.5:
         logger.info(f"'{component1_base_path.name}' identified as Epicardium.")
         return component1_base_path, component2_base_path
     else:

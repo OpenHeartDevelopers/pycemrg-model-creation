@@ -25,6 +25,7 @@ from pycemrg_model_creation.logic.contracts import (
     AtrialMeshPaths,
     UVCSurfaceExtractionPaths,
 )
+from pycemrg_model_creation.meshpaths import CarpMesh, CarpSurface
 from pycemrg_model_creation.tools import CarpWrapper, MeshtoolWrapper
 from pycemrg_model_creation.types import Chamber, SurfaceType
 from pycemrg_model_creation.utilities.mesh import ElemType, CARP_COMMON_EXTENSIONS
@@ -149,7 +150,9 @@ class SurfaceLogic:
 
             for output_ext in ["vtk", "carp_txt"]:
                 self.meshtool.extract_unreachable(
-                    input_mesh_path=paths.epi_endo_combined.with_suffix(".surfmesh"),
+                    # The .surfmesh companion of the extracted surface. Asked of
+                    # the handle: with_suffix would truncate any dotted stem.
+                    input_mesh_path=CarpSurface(paths.epi_endo_combined).surfmesh.stem,
                     submsh_path=paths.epi_endo_cc_base,
                     ofmt=output_ext,
                     ifmt="vtk",
@@ -199,7 +202,7 @@ class SurfaceLogic:
             # Step 6: Identify epicardium by outward-pointing normals
             epi_found = False
             for i, surf_data in enumerate(surfaces_data):
-                outward_fraction = geom.identify_surface_orientation(
+                outward_fraction = geom.outward_normal_fraction(
                     surf_data["pts"], surf_data["surf"], lv_cog
                 )
 
@@ -403,7 +406,7 @@ class SurfaceLogic:
             mshu.surf2vtk(
                 mesh_base_path=paths.mesh,
                 surface_path=paths.epi_surface,
-                output_vtk_path=paths.epi_surface.with_suffix(".vtk"),
+                output_vtk_path=CarpMesh(paths.epi_surface).vtk,
             )
             self.logger.info("Surface mapping completed")
 
@@ -450,9 +453,7 @@ class SurfaceLogic:
 
             # Step 3: Generate a .vtk file for visualization/debugging.
             # This is not a final artifact, so it goes in the temporary directory.
-            debug_vtk_path = (
-                paths.tmp_dir / paths.rv_endo_surface.with_suffix(".vtk").name
-            )
+            debug_vtk_path = paths.tmp_dir / CarpMesh(paths.rv_endo_surface).vtk.name
             mshu.surf2vtk(
                 mesh_base_path=paths.mesh,
                 surface_path=paths.rv_endo_surface,
@@ -494,7 +495,7 @@ class SurfaceLogic:
 
         try:
             for surf_path, vtx_path in surface_to_vtx_map:
-                surf_file_with_ext = surf_path.with_suffix(".surf")
+                surf_file_with_ext = CarpSurface(surf_path).surf
 
                 if not surf_file_with_ext.is_file():
                     # Raise an error if an input is missing, as this is a logic error.
@@ -915,55 +916,28 @@ class SurfaceLogic:
         ra_files_to_map: Optional[List[Path]] = None,
     ) -> None:
         """
-        Run the complete UVC surface extraction workflow.
+        Not implemented. Drive the per-phase methods directly.
 
-        This executes all extraction steps in the correct order:
-        1. Ventricular surfaces
-        2. LA surfaces
-        3. RA surfaces
-        4. BiV submesh and mapping
-        5. LA submesh and mapping
-        6. RA submesh and mapping
+        This orchestrated the six extraction phases end to end, but its calls
+        drifted out of step with the methods they invoke:
+        `run_ventricular_extraction` takes `(self, paths)` alone while this
+        passed three arguments, and `run_atrial_extraction` likewise. Every
+        call raised `TypeError`, so nothing depended on it.
 
-        Args:
-            paths: Master paths contract containing all sub-paths
-            tags: Tag configuration
-            ventricular_files_to_map: Optional files to map for ventricles
-            la_files_to_map: Optional files to map for LA
-            ra_files_to_map: Optional files to map for RA
+        It is left as a stub rather than deleted because the phase methods are
+        being reshaped by the contract refactor, and the right signature for a
+        whole-workflow entry point is not knowable until they settle. Rebuild
+        it then, against whatever the phases actually take.
 
         Raises:
-            SurfaceExtractionError: If any step fails
+            NotImplementedError: Always.
         """
-        self.logger.info("#" * 60)
-        self.logger.info("STARTING COMPLETE UVC SURFACE EXTRACTION")
-        self.logger.info("#" * 60)
-
-        # Phase 1: Extract ventricular surfaces
-        self.run_ventricular_extraction(
-            paths.ventricular, tags, ventricular_files_to_map
+        raise NotImplementedError(
+            "SurfaceLogic.run_all is not implemented. Its calls disagreed with "
+            "the phase methods' signatures, so it never ran. Call the phase "
+            "methods directly: run_ventricular_extraction, run_atrial_extraction, "
+            "run_biv_mesh_extraction, run_atrial_mesh_extraction."
         )
-
-        # Phase 2: Extract LA surfaces
-        self.run_atrial_extraction(paths.left_atrial, tags, Chamber.LA, la_files_to_map)
-
-        # Phase 3: Extract RA surfaces
-        self.run_atrial_extraction(
-            paths.right_atrial, tags, Chamber.RA, ra_files_to_map
-        )
-
-        # Phase 4: Extract BiV submesh
-        self.run_biv_mesh_extraction(paths.biv_mesh, tags)
-
-        # Phase 5: Extract LA submesh
-        self.run_atrial_mesh_extraction(paths.la_mesh, tags, Chamber.LA)
-
-        # Phase 6: Extract RA submesh
-        self.run_atrial_mesh_extraction(paths.ra_mesh, tags, Chamber.RA)
-
-        self.logger.info("#" * 60)
-        self.logger.info("COMPLETE UVC SURFACE EXTRACTION FINISHED")
-        self.logger.info("#" * 60)
 
     # HELPER METHODS
     def _norm_ext(self, ext: str) -> str:

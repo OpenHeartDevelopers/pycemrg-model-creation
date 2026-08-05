@@ -27,6 +27,10 @@ from pathlib import Path
 # caller that passed a concrete file where a stem was wanted.
 _CARP_MESH_EXTENSIONS = (".pts", ".elem", ".lon", ".vtk", ".bpts", ".belem")
 
+# The same guard for CarpSurface. `.vtx` is here because a surface's companion
+# is `<stem>.surf.vtx`, so a stem ending in `.vtx` is a caller one level too deep.
+_CARP_SURFACE_EXTENSIONS = (".surf", ".surfmesh", ".neubc", ".vtx")
+
 
 @dataclass(frozen=True)
 class CarpMesh:
@@ -165,4 +169,144 @@ class CarpMesh:
     def __fspath__(self) -> str:
         # Makes the handle os.PathLike, so it can be handed to a wrapper
         # wherever a stem is expected without an explicit conversion.
+        return str(self.stem)
+
+
+@dataclass(frozen=True)
+class SurfaceMesh:
+    """
+    meshtool's ``.surfmesh`` companion to an extracted surface.
+
+    Deliberately *not* a ``CarpMesh``. The name suggests one, but the recorded
+    output of real runs shows this family carries only ``.vtk``, ``.nod`` and
+    ``.fcon`` — never ``.pts`` or ``.elem``. Reusing ``CarpMesh`` here would
+    advertise five extensions that are never written, which is the kind of
+    contract-that-lies this handle exists to prevent.
+
+    ``.fcon`` is not always present: it appeared for two of the three surfmesh
+    stems in the recorded runs. Existence checks belong to the caller.
+
+    Example:
+        >>> SurfaceMesh("/data/tmp/septum.surfmesh").vtk
+        PosixPath('/data/tmp/septum.surfmesh.vtk')
+    """
+
+    stem: Path
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "stem", Path(self.stem))
+
+    @property
+    def vtk(self) -> Path:
+        """VTK rendering of the surface."""
+        return self._sibling(".vtk")
+
+    @property
+    def nod(self) -> Path:
+        """Node index map back to the parent mesh, binary."""
+        return self._sibling(".nod")
+
+    @property
+    def fcon(self) -> Path:
+        """Face connectivity. Not always written."""
+        return self._sibling(".fcon")
+
+    def _sibling(self, extension: str) -> Path:
+        return self.stem.parent / f"{self.stem.name}{extension}"
+
+    def __str__(self) -> str:
+        return str(self.stem)
+
+    def __fspath__(self) -> str:
+        return str(self.stem)
+
+
+@dataclass(frozen=True)
+class CarpSurface:
+    """
+    A surface extracted by ``meshtool extract surface``, addressed by its stem.
+
+    Like ``CarpMesh``, a surface is a family rather than a file. meshtool emits
+    the triangle list as ``<stem>.surf``, the node set that spans it as
+    ``<stem>.surf.vtx``, and — depending on the operation — a ``<stem>.neubc``
+    and a ``<stem>.surfmesh`` family.
+
+    Note that the VTX companion is ``<stem>.surf.vtx``, *not* ``<stem>.vtx``.
+    This is exactly the case ``pathlib.with_suffix`` gets wrong, and it is why
+    the surface stage needs a handle rather than string surgery.
+
+    Example:
+        >>> surface = CarpSurface("/data/tmp/septum")
+        >>> surface.surf
+        PosixPath('/data/tmp/septum.surf')
+        >>> surface.surf_vtx
+        PosixPath('/data/tmp/septum.surf.vtx')
+        >>> surface.surfmesh.nod
+        PosixPath('/data/tmp/septum.surfmesh.nod')
+    """
+
+    stem: Path
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "stem", Path(self.stem))
+
+        if self.stem.suffix in _CARP_SURFACE_EXTENSIONS:
+            raise ValueError(
+                f"CarpSurface takes a stem without an extension, got '{self.stem}'. "
+                f"Use CarpSurface('{self.stem.with_suffix('')}') instead."
+            )
+
+    # -- Identity -------------------------------------------------------
+
+    @property
+    def name(self) -> str:
+        """The stem's basename, e.g. 'septum'."""
+        return self.stem.name
+
+    @property
+    def directory(self) -> Path:
+        """The directory holding the family."""
+        return self.stem.parent
+
+    # -- The family -----------------------------------------------------
+
+    @property
+    def surf(self) -> Path:
+        """Triangle list."""
+        return self._sibling(".surf")
+
+    @property
+    def surf_vtx(self) -> Path:
+        """Node indices spanned by the surface. Note the doubled extension."""
+        return self._sibling(".surf.vtx")
+
+    @property
+    def neubc(self) -> Path:
+        """Neumann boundary conditions. meshtool writes it; nothing here reads it."""
+        return self._sibling(".neubc")
+
+    @property
+    def surfmesh(self) -> SurfaceMesh:
+        """The ``.surfmesh`` companion family, as its own handle."""
+        return SurfaceMesh(self._sibling(".surfmesh"))
+
+    # -- Internals ------------------------------------------------------
+
+    def _sibling(self, extension: str) -> Path:
+        """
+        Append an extension to the stem.
+
+        Deliberately not `with_suffix`: surface stems routinely carry dots
+        (`epi_endo.surfmesh`, `septum_cc.part0`) and those segments are
+        meaningful, not extensions to be replaced.
+        """
+        return self.stem.parent / f"{self.stem.name}{extension}"
+
+    # -- Interop --------------------------------------------------------
+
+    def __str__(self) -> str:
+        return str(self.stem)
+
+    def __fspath__(self) -> str:
+        # meshtool takes the stem on the command line, as with CarpMesh.
         return str(self.stem)

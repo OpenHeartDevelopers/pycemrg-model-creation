@@ -10,7 +10,7 @@ from pathlib import Path
 
 import pytest
 
-from pycemrg_model_creation.meshpaths import CarpMesh
+from pycemrg_model_creation.meshpaths import CarpMesh, CarpSurface, SurfaceMesh
 
 
 class TestConstruction:
@@ -140,4 +140,104 @@ class TestPurity:
         mesh = CarpMesh(tmp_path / "absent")
         assert not mesh.pts.exists()
         assert mesh.pts == tmp_path / "absent.pts"
+        assert list(tmp_path.iterdir()) == []
+
+
+# --- Surfaces -------------------------------------------------------------
+#
+# Every name below was observed in `.claude/tree_output_of_tests.md`, from the
+# recorded ventricular surface-extraction run.
+
+SURFACE = CarpSurface("/data/BiV/tmp/septum")
+
+
+class TestSurfaceConstruction:
+    def test_accepts_a_string_and_a_path(self):
+        assert CarpSurface("/t/septum").stem == Path("/t/septum")
+        assert CarpSurface(Path("/t/septum")).stem == Path("/t/septum")
+
+    def test_is_frozen(self):
+        with pytest.raises(Exception):
+            SURFACE.stem = Path("/elsewhere")
+
+    @pytest.mark.parametrize("extension", [".surf", ".surfmesh", ".neubc", ".vtx"])
+    def test_a_concrete_file_is_refused(self, extension):
+        # `.vtx` is refused too: the companion is <stem>.surf.vtx, so a caller
+        # holding a .vtx is one level too deep.
+        with pytest.raises(ValueError, match="without an extension"):
+            CarpSurface(f"/t/septum{extension}")
+
+
+class TestSurfaceFamily:
+    def test_the_names_meshtool_writes(self):
+        assert SURFACE.surf == Path("/data/BiV/tmp/septum.surf")
+        assert SURFACE.neubc == Path("/data/BiV/tmp/septum.neubc")
+
+    def test_the_vtx_companion_carries_the_doubled_extension(self):
+        # septum.surf.vtx, never septum.vtx. This is the case with_suffix
+        # silently gets wrong, and the reason this handle exists.
+        assert SURFACE.surf_vtx == Path("/data/BiV/tmp/septum.surf.vtx")
+        assert SURFACE.surf_vtx.name != "septum.vtx"
+
+    def test_identity_helpers(self):
+        assert SURFACE.name == "septum"
+        assert SURFACE.directory == Path("/data/BiV/tmp")
+
+
+class TestSurfaceMeshCompanion:
+    def test_is_reached_through_the_surface(self):
+        assert isinstance(SURFACE.surfmesh, SurfaceMesh)
+        assert str(SURFACE.surfmesh) == "/data/BiV/tmp/septum.surfmesh"
+
+    def test_the_three_extensions_real_runs_produce(self):
+        assert SURFACE.surfmesh.vtk == Path("/data/BiV/tmp/septum.surfmesh.vtk")
+        assert SURFACE.surfmesh.nod == Path("/data/BiV/tmp/septum.surfmesh.nod")
+        assert SURFACE.surfmesh.fcon == Path("/data/BiV/tmp/septum.surfmesh.fcon")
+
+    @pytest.mark.parametrize("absent", ["pts", "elem", "lon", "bpts", "belem"])
+    def test_does_not_advertise_carp_mesh_members(self, absent):
+        # A .surfmesh is not a CARP mesh. No recorded run has ever produced
+        # septum.surfmesh.pts, so exposing one would be a contract that lies.
+        assert not hasattr(SURFACE.surfmesh, absent)
+
+    def test_is_not_a_carp_mesh(self):
+        assert not isinstance(SURFACE.surfmesh, CarpMesh)
+
+
+class TestSurfaceDottedStemsAreNotTruncated:
+    @pytest.mark.parametrize(
+        "stem, expected",
+        [
+            ("septum_cc.part0", "septum_cc.part0.surf"),
+            ("lv_epi_intermediate", "lv_epi_intermediate.surf"),
+            ("myocardium.clean.v2", "myocardium.clean.v2.surf"),
+        ],
+    )
+    def test_every_dot_segment_survives(self, stem, expected):
+        assert CarpSurface(f"/t/{stem}").surf.name == expected
+
+    def test_a_surfmesh_stem_is_not_a_surface_stem(self):
+        # In the recorded runs `epi_endo` is the surface — epi_endo.surf,
+        # epi_endo.neubc — and epi_endo.surfmesh is its companion. Reaching the
+        # companion goes through the surface, never by constructing it directly.
+        with pytest.raises(ValueError, match="without an extension"):
+            CarpSurface("/t/epi_endo.surfmesh")
+
+        assert CarpSurface("/t/epi_endo").surfmesh.vtk.name == "epi_endo.surfmesh.vtk"
+
+    def test_with_suffix_would_have_truncated(self):
+        # Pins the bug rather than merely the fix.
+        assert Path("/t/septum_cc.part0").with_suffix(".surf").name == "septum_cc.surf"
+        assert CarpSurface("/t/septum_cc.part0").surf.name == "septum_cc.part0.surf"
+
+
+class TestSurfaceInterop:
+    def test_is_os_pathlike_and_yields_the_stem(self):
+        assert os.fspath(SURFACE) == "/data/BiV/tmp/septum"
+        assert str(SURFACE) == "/data/BiV/tmp/septum"
+
+    def test_touches_no_filesystem(self, tmp_path):
+        surface = CarpSurface(tmp_path / "absent")
+        assert not surface.surf.exists()
+        assert not surface.surfmesh.vtk.exists()
         assert list(tmp_path.iterdir()) == []
