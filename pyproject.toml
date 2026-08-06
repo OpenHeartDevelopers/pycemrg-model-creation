@@ -41,3 +41,12 @@ Homepage = "https://github.com/OpenHeartDevelopers/pycemrg-model-creation" # not
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.pytest.ini_options]
+# Markers must be declared or pytest warns on every run. The declaration is
+# also a typo guard: an undeclared `@pytest.mark.integraton` silently matches
+# nothing under `-m integration`, so the test is skipped without a word.
+markers = [
+    "integration: needs real mguvc/meshtool binaries and the PYCEMRG_* variables; run on the workstation, not in CI",
+    "slow: minutes rather than seconds",
+]

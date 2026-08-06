@@ -812,6 +812,8 @@ class SurfaceLogic:
         self.logger.info("STARTING VENTRICULAR SURFACE EXTRACTION WORKFLOW")
         self.logger.info("=" * 60)
 
+        self._prepare_directories(paths)
+
         self.extract_ventricular_base(paths)
         self.extract_ventricular_surfaces(paths)
         self.extract_septum(paths)
@@ -936,8 +938,20 @@ class SurfaceLogic:
         )
 
     # HELPER METHODS
-    def _norm_ext(self, ext: str) -> str:
-        return ext.lstrip(".")
+    def _prepare_directories(self, paths: VentricularSurfacePaths) -> None:
+        """
+        Create the directories the ventricular workflow writes into.
+
+        This lives here rather than in the path builder so that constructing a
+        contract in order to inspect it has no effect on disk (see also
+        `RefinementLogic._prepare_directories`).
+
+        Only the BiV directories are created here. LA/RA are still made
+        eagerly by `ModelCreationPathBuilder`, and move when the atrial flow
+        is refactored.
+        """
+        for directory in (paths.output_dir, paths.tmp_dir):
+            directory.mkdir(parents=True, exist_ok=True)
 
     def _copy_mesh_family(
         self, source: CarpMesh, target: CarpMesh, *, with_vtk: bool = False

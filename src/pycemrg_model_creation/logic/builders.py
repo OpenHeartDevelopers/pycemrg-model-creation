@@ -112,15 +112,13 @@ class ModelCreationPathBuilder:
         self.la_tmp_dir = self.la_dir / "tmp"
         self.ra_tmp_dir = self.ra_dir / "tmp"
 
-        # Ensure all necessary directories exist upon initialization
-        for d in [
-            self.biv_dir,
-            self.la_dir,
-            self.ra_dir,
-            self.biv_tmp_dir,
-            self.la_tmp_dir,
-            self.ra_tmp_dir,
-        ]:
+        # Naming must not touch disk: constructing a contract to inspect it
+        # should have no effect. `SurfaceLogic._prepare_directories` creates
+        # the BiV tree when the workflow actually runs.
+        #
+        # LA/RA are still created here because the atrial flow has not been
+        # refactored and has nowhere else to do it. They move with it.
+        for d in [self.la_dir, self.ra_dir, self.la_tmp_dir, self.ra_tmp_dir]:
             d.mkdir(parents=True, exist_ok=True)
 
     def build_ventricular_paths(self, mesh_base_path: Path) -> VentricularSurfacePaths:
@@ -128,21 +126,15 @@ class ModelCreationPathBuilder:
         return VentricularSurfacePaths(
             # Input
             mesh=mesh_base_path,
-            # Directories
+            # Output root. `tmp_dir` and every intermediate and final surface
+            # name is now derived from this by the contract itself, so the
+            # builder no longer restates them — there was one spelling of
+            # `biv_epi` here and another in the logic, and they could drift.
             output_dir=self.biv_dir,
-            tmp_dir=self.biv_tmp_dir,
-            # Intermediate surfaces
-            base_surface=self.biv_tmp_dir / "base",
-            epi_endo_combined=self.biv_tmp_dir / "epi_endo",
+            # Discovered-outputs stems, still passed until they become a
+            # returned type rather than a predicted name.
             epi_endo_cc_base=self.biv_tmp_dir / "epi_endo_cc",
-            septum_raw=self.biv_tmp_dir / "septum",
             septum_cc_base=self.biv_tmp_dir / "septum_cc",
-            lv_epi_intermediate=self.biv_tmp_dir / "lv_epi_intermediate",
-            # Final surfaces
-            epi_surface=self.biv_dir / "biv_epi",
-            lv_endo_surface=self.biv_dir / "biv_lvendo",
-            rv_endo_surface=self.biv_dir / "biv_rvendo",
-            septum_surface=self.biv_dir / "biv_septum",
             # VTX files
             base_vtx=self.biv_dir / "biv.base.vtx",
             epi_vtx=self.biv_dir / "biv.epi.vtx",

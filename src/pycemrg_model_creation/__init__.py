@@ -4,18 +4,26 @@
 pycemrg-carp-tools: A Pythonic SDK for the CARPentry/openCARP ecosystem.
 """
 
-from . import tools
-from . import logic
-from . import utilities
+from pycemrg_model_creation import tools
+from pycemrg_model_creation import logic
+from pycemrg_model_creation import utilities
 
 # Elevate the most important user-facing classes for convenience
-from .config import TagsConfig
-from .meshpaths import CarpMesh
-from .logic import SurfaceLogic
-from .tools import CarpWrapper, MeshtoolWrapper
+from pycemrg_model_creation.config import TagsConfig
+from pycemrg_model_creation.meshpaths import (
+    CarpMesh,
+    CarpSurface,
+    SurfaceMesh,
+    SubmeshIndex,
+)
+from pycemrg_model_creation.logic import SurfaceLogic
+from pycemrg_model_creation.tools import CarpWrapper, MeshtoolWrapper
 
 __all__ = [
     "CarpMesh",
+    "CarpSurface",
+    "SurfaceMesh",
+    "SubmeshIndex",
     "TagsConfig",
     "SurfaceLogic",
     "CarpWrapper",

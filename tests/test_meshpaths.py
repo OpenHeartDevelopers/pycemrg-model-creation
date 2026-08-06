@@ -31,11 +31,19 @@ class TestConstruction:
         assert CarpMesh("/data/BiV/BiV") == CarpMesh(Path("/data/BiV/BiV"))
 
     @pytest.mark.parametrize(
-        "extension", [".pts", ".elem", ".lon", ".vtk", ".bpts", ".belem"]
+        "extension",
+        [".pts", ".elem", ".lon", ".vtk", ".bpts", ".belem", ".nod", ".eidx"],
     )
     def test_rejects_a_stem_that_is_already_a_file(self, extension):
         with pytest.raises(ValueError, match="without an extension"):
             CarpMesh(f"/data/BiV/BiV{extension}")
+
+    def test_the_index_pair_is_refused_as_a_stem(self):
+        # `.nod`/`.eidx` are reached through `.index`, but they belong to this
+        # stem, so holding one and calling it a mesh is the same mistake as
+        # holding a `.pts`. Caught at construction, not at first use.
+        with pytest.raises(ValueError, match="Use CarpMesh"):
+            CarpMesh("/data/BiV/biv_epi.nod")
 
     def test_allows_a_dotted_stem(self):
         # .surfmesh and .partN stems are legitimate, not mistakes
@@ -213,6 +221,21 @@ class TestSurfaceMeshCompanion:
         # asserting here too or a break in the base is invisible.
         assert SURFACE.surfmesh.name == "septum.surfmesh"
         assert SURFACE.surfmesh.directory == Path("/data/BiV/tmp")
+
+    @pytest.mark.parametrize("extension", [".vtk", ".nod", ".fcon"])
+    def test_a_concrete_file_is_refused(self, extension):
+        # Closes the asymmetry that existed while SurfaceMesh refused nothing:
+        # `SurfaceMesh("x.nod")` used to construct, then raise only when `.nod`
+        # was asked for, because the delegation handed the stem to SubmeshIndex.
+        # Now it fails at construction, where the mistake was made.
+        with pytest.raises(ValueError, match="without an extension"):
+            SurfaceMesh(f"/data/BiV/tmp/septum.surfmesh{extension}")
+
+    def test_the_surfmesh_segment_itself_is_still_a_valid_stem(self):
+        # `.surfmesh` is deliberately absent from the guard — it is the stem's
+        # own last segment, and refusing it would reject every real instance.
+        assert SurfaceMesh("/t/septum.surfmesh").vtk.name == "septum.surfmesh.vtk"
+        assert CarpSurface("/t/septum").surfmesh.nod.name == "septum.surfmesh.nod"
 
 
 class TestSurfaceDottedStemsAreNotTruncated:

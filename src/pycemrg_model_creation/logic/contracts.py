@@ -46,44 +46,111 @@ class MeshPostprocessingPaths:
         """Temporary directory for intermediate files. The intermediate mesh's own directory."""
         return self.intermediate_myocardium_mesh.directory
 
-@dataclass
+@dataclass(frozen=True)
 class VentricularSurfacePaths:
     """
     Path contract for ventricular (BiV) surface extraction.
 
-    All paths must be provided by the orchestrator. The logic layer
-    never derives or constructs paths.
+    **Derived names are asked for, not stored.** Every name below that is a
+    fixed convention relative to ``output_dir`` is a property, so the contract
+    and the builder cannot drift apart: there is one spelling of ``biv_epi``,
+    and it lives here. Only genuine inputs, and names not yet reducible, are
+    fields.
+
+    Frozen, like the other refactored contracts: a derived name that could be
+    reassigned would defeat the point. Constructing this touches no disk —
+    directory *creation* belongs to ``SurfaceLogic``, not to naming.
+
+    Two groups remain fields although they look derivable, each for a stated
+    reason rather than by oversight:
+
+    - ``epi_endo_cc_base`` / ``septum_cc_base`` are the stems handed to
+      ``meshtool extract unreachable``, whose ``.partN`` arity is discovered at
+      run time. They are due to become a *returned* discovered-outputs type,
+      not properties, so they are left alone rather than converted twice.
+    - The six ``*_vtx`` names are held pending confirmation of what each is
+      for downstream. ``rv_septum_point_vtx`` in particular has no producer in
+      this flow — it is threaded into the BiV mesh stage's ``vtx_files_to_map``
+      and appears in no recorded run.
     """
 
-    # Input
-    mesh: Path  # Full four-chamber mesh base name (without extensions)
+    # -- Inputs ---------------------------------------------------------
 
-    # Directories
+    # Full four-chamber mesh base name, without extensions. Still a bare
+    # `Path`: converting it to a `CarpMesh` is atomic across this contract,
+    # `builders.py` and every wrapper call site in `surfaces.py`, so it is a
+    # step of its own rather than a half-applied type here.
+    mesh: Path
+
+    # Output root for this chamber, e.g. <root>/BiV. Not derivable from
+    # `mesh`: the input mesh lives in a different tree from the outputs.
     output_dir: Path
-    tmp_dir: Path
 
-    # Intermediate surfaces (in tmp_dir)
-    base_surface: Path
-    epi_endo_combined: Path  # Before separation
-    epi_endo_cc_base: Path  # Base name for connected components
-    septum_raw: Path
-    septum_cc_base: Path  # Base name for septum connected components
-    lv_epi_intermediate: Path  # Intermediate septum extraction result
+    # -- Discovered outputs, pending their own return type ---------------
 
-    # Final surfaces (in output_dir)
-    epi_surface: Path
-    lv_endo_surface: Path
-    rv_endo_surface: Path
-    septum_surface: Path
+    epi_endo_cc_base: Path  # stem for the epi/endo connected components
+    septum_cc_base: Path  # stem for the septum connected components
 
-    # VTX files for UVC (in output_dir)
+    # -- VTX files for UVC (in output_dir) -------------------------------
+
     base_vtx: Path
     epi_vtx: Path
     lv_endo_vtx: Path
     rv_endo_vtx: Path
     septum_vtx: Path
-    #    apex_vtx: Path
+    #    apex_vtx: Path  # retired
     rv_septum_point_vtx: Path
+
+    # -- Derived directories ---------------------------------------------
+
+    @property
+    def tmp_dir(self) -> Path:
+        """Scratch directory for intermediate surfaces."""
+        return self.output_dir / "tmp"
+
+    # -- Intermediate surfaces (in tmp_dir) ------------------------------
+
+    @property
+    def base_surface(self) -> Path:
+        """Ventricle/valve-plane interface, before VTX conversion."""
+        return self.tmp_dir / "base"
+
+    @property
+    def epi_endo_combined(self) -> Path:
+        """Combined epi/endo surface, before separation into components."""
+        return self.tmp_dir / "epi_endo"
+
+    @property
+    def septum_raw(self) -> Path:
+        """LV surface facing the RV, before component separation."""
+        return self.tmp_dir / "septum"
+
+    @property
+    def lv_epi_intermediate(self) -> Path:
+        """The non-septum component of the septum extraction."""
+        return self.tmp_dir / "lv_epi_intermediate"
+
+    # -- Final surfaces (in output_dir) ----------------------------------
+
+    @property
+    def epi_surface(self) -> Path:
+        """Epicardium."""
+        return self.output_dir / "biv_epi"
+
+    @property
+    def lv_endo_surface(self) -> Path:
+        """LV endocardium."""
+        return self.output_dir / "biv_lvendo"
+
+    @property
+    def rv_endo_surface(self) -> Path:
+        """RV endocardium."""
+        return self.output_dir / "biv_rvendo"
+
+    @property
+    def septum_surface(self) -> Path:
+        """Interventricular septum."""
+        return self.output_dir / "biv_septum"
 
 
 @dataclass

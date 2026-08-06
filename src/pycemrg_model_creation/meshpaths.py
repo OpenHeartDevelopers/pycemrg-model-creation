@@ -167,7 +167,9 @@ class CarpMesh(_StemHandle):
     """
 
     # A stem ending in one of these is almost always a caller that passed a
-    # concrete file where a stem was wanted.
+    # concrete file where a stem was wanted. `.nod`/`.eidx` are included even
+    # though they are reached through `.index`: they belong to the same stem,
+    # so a caller holding one is one level too deep in exactly the same way.
     _refuses: ClassVar[tuple[str, ...]] = (
         ".pts",
         ".elem",
@@ -175,6 +177,8 @@ class CarpMesh(_StemHandle):
         ".vtk",
         ".bpts",
         ".belem",
+        ".nod",
+        ".eidx",
     )
 
     # -- The family -----------------------------------------------------
@@ -283,9 +287,10 @@ class SurfaceMesh(_StemHandle):
         PosixPath('/data/tmp/septum.surfmesh.vtk')
     """
 
-    # Refuses nothing: a `.surfmesh` stem legitimately ends in a dot-segment,
-    # and no guard was ever asserted here. `()` is the setting, not a gap.
-    _refuses: ClassVar[tuple[str, ...]] = ()
+    # The family's own members. A stem ending in one of these is a caller
+    # holding a concrete file — `septum.surfmesh.nod` — one level too deep.
+    # Note `.surfmesh` itself is absent: that *is* the stem's last segment.
+    _refuses: ClassVar[tuple[str, ...]] = (".vtk", ".nod", ".fcon")
 
     @property
     def vtk(self) -> Path:
