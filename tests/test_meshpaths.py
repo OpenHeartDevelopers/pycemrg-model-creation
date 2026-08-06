@@ -208,6 +208,12 @@ class TestSurfaceMeshCompanion:
     def test_is_not_a_carp_mesh(self):
         assert not isinstance(SURFACE.surfmesh, CarpMesh)
 
+    def test_identity_helpers_are_inherited(self):
+        # As for SubmeshIndex: these come from the shared base, so they need
+        # asserting here too or a break in the base is invisible.
+        assert SURFACE.surfmesh.name == "septum.surfmesh"
+        assert SURFACE.surfmesh.directory == Path("/data/BiV/tmp")
+
 
 class TestSurfaceDottedStemsAreNotTruncated:
     @pytest.mark.parametrize(
@@ -301,6 +307,14 @@ class TestSubmeshIndexPair:
         index = SubmeshIndex("/data/BiV/biv_epi")
         assert index.nod.parent == Path("/data/BiV")
         assert index.eidx.parent == Path("/data/BiV")
+
+    def test_identity_helpers_are_inherited(self):
+        # `name`/`directory` come from the shared base rather than being
+        # restated here. Without this, breaking them in the base goes
+        # unnoticed for this handle.
+        index = SubmeshIndex("/t/epi_endo_cc.part0")
+        assert index.name == "epi_endo_cc.part0"
+        assert index.directory == Path("/t")
 
 
 class TestSubmeshIndexDottedStemsAreNotTruncated:
