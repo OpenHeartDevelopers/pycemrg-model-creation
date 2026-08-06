@@ -9,6 +9,7 @@ are provided explicitly through dataclass contracts.
 """
 
 import logging
+import shutil
 from dataclasses import dataclass
 from pathlib import Path
 from typing import List, Optional
@@ -28,7 +29,7 @@ from pycemrg_model_creation.logic.contracts import (
 from pycemrg_model_creation.meshpaths import CarpMesh, CarpSurface
 from pycemrg_model_creation.tools import CarpWrapper, MeshtoolWrapper
 from pycemrg_model_creation.types import Chamber, SurfaceType
-from pycemrg_model_creation.utilities.mesh import ElemType, CARP_COMMON_EXTENSIONS
+from pycemrg_model_creation.utilities.mesh import ElemType
 
 import pycemrg_model_creation.utilities.mesh as mshu
 import pycemrg_model_creation.utilities.geometry as geom
@@ -56,16 +57,18 @@ class SurfaceLogic:
 
     Usage:
         meshtool = MeshtoolWrapper.from_system_path()
-        logic = SurfaceLogic(meshtool)
-        logic.run_ventricular_extraction(paths, tags)
+        logic = SurfaceLogic(meshtool, label_manager)
+        logic.run_ventricular_extraction(paths)
     """
 
     def __init__(self, meshtool: MeshtoolWrapper, label_manager: LabelManager):
         """
-        Initialize SurfaceLogic with a meshtool wrapper.
+        Initialize SurfaceLogic with its collaborators.
 
         Args:
             meshtool: MeshtoolWrapper instance for executing meshtool commands
+            label_manager: Resolves anatomical names ("LV", "MV") to the tag
+                values used in the mesh. Reached as `self.labels`.
         """
         self.meshtool = meshtool
         self.labels = label_manager
@@ -81,7 +84,6 @@ class SurfaceLogic:
 
         Args:
             paths: Ventricular surface paths contract
-            tags: Tag configuration
 
         Raises:
             SurfaceExtractionError: If extraction fails
@@ -122,7 +124,6 @@ class SurfaceLogic:
 
         Args:
             paths: Ventricular surface paths contract
-            tags: Tag configuration
 
         Raises:
             SurfaceIdentificationError: If surfaces cannot be identified
@@ -237,20 +238,20 @@ class SurfaceLogic:
                 )
 
             # Step 7: Rename files to final output paths
-            self._rename_surface_files(
-                paths.tmp_dir / cc_parts[epi_idx],  # epicardium
-                paths.epi_surface,
-                formats=CARP_COMMON_EXTENSIONS,
+            self._copy_mesh_family(
+                CarpMesh(paths.tmp_dir / cc_parts[epi_idx]),  # epicardium
+                CarpMesh(paths.epi_surface),
+                with_vtk=True,
             )
-            self._rename_surface_files(
-                paths.tmp_dir / cc_parts[lv_endo_idx],  # lv_endocardium
-                paths.lv_endo_surface,
-                formats=CARP_COMMON_EXTENSIONS,
+            self._copy_mesh_family(
+                CarpMesh(paths.tmp_dir / cc_parts[lv_endo_idx]),  # lv_endocardium
+                CarpMesh(paths.lv_endo_surface),
+                with_vtk=True,
             )
-            self._rename_surface_files(
-                paths.tmp_dir / cc_parts[rv_endo_idx],  # rv_endocardium
-                paths.rv_endo_surface,
-                formats=CARP_COMMON_EXTENSIONS,
+            self._copy_mesh_family(
+                CarpMesh(paths.tmp_dir / cc_parts[rv_endo_idx]),  # rv_endocardium
+                CarpMesh(paths.rv_endo_surface),
+                with_vtk=True,
             )
 
             self.logger.info("Successfully extracted ventricular surfaces")
@@ -271,7 +272,6 @@ class SurfaceLogic:
 
         Args:
             paths: Ventricular surface paths contract
-            tags: Tag configuration
 
         Raises:
             SurfaceExtractionError: If extraction fails
@@ -316,15 +316,13 @@ class SurfaceLogic:
             self.logger.info("Renaming septum connected components")
 
             # First is LV epi (intermediate), second is actual septum
-            self._rename_surface_files(
-                paths.tmp_dir / cc_parts[0],
-                paths.lv_epi_intermediate,
-                formats=["pts", "elem", "lon", "nod", "eidx"],
+            self._copy_mesh_family(
+                CarpMesh(paths.tmp_dir / cc_parts[0]),
+                CarpMesh(paths.lv_epi_intermediate),
             )
-            self._rename_surface_files(
-                paths.tmp_dir / cc_parts[1],
-                paths.septum_surface,
-                formats=["pts", "elem", "lon", "nod", "eidx"],
+            self._copy_mesh_family(
+                CarpMesh(paths.tmp_dir / cc_parts[1]),
+                CarpMesh(paths.septum_surface),
             )
 
             self.logger.info(f"Septum extracted to {paths.septum_surface}")
@@ -359,28 +357,31 @@ class SurfaceLogic:
                 paths.septum_raw.parent / f"{paths.septum_raw.name}.surf"
             )
 
-            # Each tuple is: (eidx_base_name, original_surface_name, output_base_name)
+            # Each pair is: (component_stem, surface_it_was_carved_from).
+            # The component stem is used three ways — its `.nod`/`.eidx` are
+            # read, and the `.surf`/`.vtx` results are written back to the same
+            # stem — so it appears once, not once per role.
             mapping_operations = [
                 # Epi, LV endo, RV endo all come from epi_endo combined surface
                 (
-                    paths.epi_surface,  # "myocardium.epi" eidx/nod
+                    paths.epi_surface,  # biv_epi.eidx / .nod
                     original_surface_epi_endo,
                 ),
                 (
-                    paths.lv_endo_surface,  # "myocardium.lvendo" eidx/nod
+                    paths.lv_endo_surface,  # biv_lvendo.eidx / .nod
                     original_surface_epi_endo,
                 ),
                 (
-                    paths.rv_endo_surface,  # "myocardium.rvendo" eidx/nod
+                    paths.rv_endo_surface,  # biv_rvendo.eidx / .nod
                     original_surface_epi_endo,
                 ),
                 # LV epi intermediate and septum come from septum extraction
                 (
-                    paths.lv_epi_intermediate,  # "lvepi" eidx/nod
+                    paths.lv_epi_intermediate,  # lv_epi_intermediate.eidx / .nod
                     original_surface_septum_raw,
                 ),
                 (
-                    paths.septum_surface,  # "myocardium.rvsept" eidx/nod
+                    paths.septum_surface,  # biv_septum.eidx / .nod
                     original_surface_septum_raw,
                 ),
             ]
@@ -542,7 +543,6 @@ class SurfaceLogic:
 
         Args:
             paths: Atrial surface paths contract
-            tags: Tag configuration
             chamber: Chamber.LA or Chamber.RA
 
         Raises:
@@ -579,7 +579,6 @@ class SurfaceLogic:
 
         Args:
             paths: Atrial surface paths contract
-            tags: Tag configuration
             chamber: Chamber.LA or Chamber.RA
 
         Raises:
@@ -799,14 +798,12 @@ class SurfaceLogic:
         1. Extract base surface
         2. Extract and identify epi, LV endo, RV endo
         3. Extract septum
-        4. Map surfaces (if files provided)
-        5. Remove septum from LV endo
+        4. Map connected components back onto the original surfaces
+        5. Remove septum from RV endo
         6. Prepare VTX files
 
         Args:
             paths: Ventricular surface paths contract
-            tags: Tag configuration
-            files_to_map: Optional list of data files to map onto surfaces
 
         Raises:
             SurfaceExtractionError: If any step fails
@@ -839,7 +836,6 @@ class SurfaceLogic:
 
         Args:
             paths: Atrial surface paths contract
-            tags: Tag configuration
             chamber: Chamber.LA or Chamber.RA
             files_to_map: Optional list of data files to map onto surfaces
 
@@ -943,29 +939,44 @@ class SurfaceLogic:
     def _norm_ext(self, ext: str) -> str:
         return ext.lstrip(".")
 
-    def _rename_surface_files(
-        self, source_base: Path, target_base: Path, formats: List[str]
+    def _copy_mesh_family(
+        self, source: CarpMesh, target: CarpMesh, *, with_vtk: bool = False
     ) -> None:
         """
-        Rename surface files from source to target base name.
+        Copy a CARP submesh family from one stem to another.
+
+        `meshtool extract unreachable` writes each connected component under a
+        `.partN` stem; this moves one of those components to the name the rest
+        of the pipeline expects. Despite the surrounding "surface" vocabulary
+        these are *mesh* families — the CARP triple plus the submesh index
+        pair, because a component is meaningless without the `.nod`/`.eidx`
+        that map it back to the mesh it was carved from.
+
+        Every member listed is required. A missing one means the extraction did
+        not produce what was expected, which is worth failing on rather than
+        carrying a partial family forward.
 
         Args:
-            source_base: Source base path (without extension)
-            target_base: Target base path (without extension)
-            formats: List of file extensions to rename
+            source: The component to copy from.
+            target: The stem to copy to.
+            with_vtk: Also copy the `.vtk` visualisation companion.
+
+        Raises:
+            FileNotFoundError: If any expected member is absent.
         """
-        import shutil
+        members = [
+            (source.pts, target.pts),
+            (source.elem, target.elem),
+            (source.lon, target.lon),
+            (source.index.nod, target.index.nod),
+            (source.index.eidx, target.index.eidx),
+        ]
+        if with_vtk:
+            members.append((source.vtk, target.vtk))
 
-        target_dir = target_base.parent
-        target_name = target_base.name
-
-        for extension in formats:
-            fmt = self._norm_ext(extension)
-            source_file = source_base.parent / f"{source_base.name}.{fmt}"
-            target_file = target_dir / f"{target_name}.{fmt}"
-
-            if source_file.exists():
-                shutil.copy(str(source_file), str(target_file))
-                self.logger.debug(f"Renamed {source_file.name} -> {target_file.name}")
-            else:
+        for source_file, target_file in members:
+            if not source_file.exists():
                 raise FileNotFoundError(f"Source file not found: {source_file}")
+
+            shutil.copy(str(source_file), str(target_file))
+            self.logger.debug(f"Copied {source_file.name} -> {target_file.name}")

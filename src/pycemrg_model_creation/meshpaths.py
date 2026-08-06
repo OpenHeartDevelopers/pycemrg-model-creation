@@ -31,6 +31,72 @@ _CARP_MESH_EXTENSIONS = (".pts", ".elem", ".lon", ".vtk", ".bpts", ".belem")
 # is `<stem>.surf.vtx`, so a stem ending in `.vtx` is a caller one level too deep.
 _CARP_SURFACE_EXTENSIONS = (".surf", ".surfmesh", ".neubc", ".vtx")
 
+# The index pair. `SubmeshIndex` is the single owner of where `.nod` lives;
+# both `CarpMesh` and `SurfaceMesh` reach it rather than restating it.
+_SUBMESH_INDEX_EXTENSIONS = (".nod", ".eidx")
+
+
+@dataclass(frozen=True)
+class SubmeshIndex:
+    """
+    The ``.nod``/``.eidx`` pair written when a submesh is carved from a parent.
+
+    ``meshtool extract unreachable`` and the submesh extractions emit, beside
+    the mesh family itself, two binary index files: ``.nod`` maps the submesh's
+    node ids back to the parent's, and ``.eidx`` does the same for its
+    elements. They are what lets a surface extracted from one connected
+    component be expressed again in the coordinates of the mesh it came from.
+
+    Deliberately its own handle rather than two more properties on
+    ``CarpMesh``. A mesh that was never carved out of anything — the trunk
+    ``BiV`` — has no index pair, so advertising one on every ``CarpMesh``
+    would be the same contract-that-lies that keeps ``SurfaceMesh`` separate.
+    Reach it through :attr:`CarpMesh.index` when the mesh is a submesh.
+
+    A ``.surfmesh`` carries a ``.nod`` but no ``.eidx``, so ``SurfaceMesh``
+    delegates its ``.nod`` here and does not expose ``.eidx`` at all.
+
+    Example:
+        >>> SubmeshIndex("/tmp/epi_endo_cc.part0").eidx
+        PosixPath('/tmp/epi_endo_cc.part0.eidx')
+    """
+
+    stem: Path
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "stem", Path(self.stem))
+
+        if self.stem.suffix in _SUBMESH_INDEX_EXTENSIONS:
+            raise ValueError(
+                f"SubmeshIndex takes a stem without an extension, got '{self.stem}'. "
+                f"Use SubmeshIndex('{self.stem.with_suffix('')}') instead."
+            )
+
+    @property
+    def nod(self) -> Path:
+        """Node index map back to the parent mesh, binary."""
+        return self._sibling(".nod")
+
+    @property
+    def eidx(self) -> Path:
+        """Element index map back to the parent mesh, binary."""
+        return self._sibling(".eidx")
+
+    def _sibling(self, extension: str) -> Path:
+        """
+        Append an extension to the stem.
+
+        Deliberately not `with_suffix`: the components these belong to carry
+        `.partN` stems, whose dot-segment is meaningful.
+        """
+        return self.stem.parent / f"{self.stem.name}{extension}"
+
+    def __str__(self) -> str:
+        return str(self.stem)
+
+    def __fspath__(self) -> str:
+        return str(self.stem)
+
 
 @dataclass(frozen=True)
 class CarpMesh:
@@ -112,6 +178,21 @@ class CarpMesh:
     def belem(self) -> Path:
         """Element connectivity, binary."""
         return self._sibling(".belem")
+
+    # -- Submesh index --------------------------------------------------
+
+    @property
+    def index(self) -> SubmeshIndex:
+        """
+        The ``.nod``/``.eidx`` pair mapping this mesh back to its parent.
+
+        Meaningful only when this mesh was carved out of a larger one — a
+        connected component, or an extracted submesh. The trunk mesh has no
+        such pair, which is why these two extensions are reached through a
+        nested handle rather than sitting alongside ``.pts`` and ``.elem``.
+        As everywhere else here, existence checks belong to the caller.
+        """
+        return SubmeshIndex(self.stem)
 
     # -- Role-named siblings --------------------------------------------
 
@@ -203,8 +284,15 @@ class SurfaceMesh:
 
     @property
     def nod(self) -> Path:
-        """Node index map back to the parent mesh, binary."""
-        return self._sibling(".nod")
+        """
+        Node index map back to the parent mesh, binary.
+
+        The same concept as a submesh's ``.nod``, so it is delegated rather
+        than restated — one definition of where ``.nod`` sits. There is no
+        matching ``.eidx``: no recorded run has produced one for a
+        ``.surfmesh``, so the pair is not exposed here as a pair.
+        """
+        return SubmeshIndex(self.stem).nod
 
     @property
     def fcon(self) -> Path:

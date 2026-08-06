@@ -10,7 +10,12 @@ from pathlib import Path
 
 import pytest
 
-from pycemrg_model_creation.meshpaths import CarpMesh, CarpSurface, SurfaceMesh
+from pycemrg_model_creation.meshpaths import (
+    CarpMesh,
+    CarpSurface,
+    SubmeshIndex,
+    SurfaceMesh,
+)
 
 
 class TestConstruction:
@@ -240,4 +245,146 @@ class TestSurfaceInterop:
         surface = CarpSurface(tmp_path / "absent")
         assert not surface.surf.exists()
         assert not surface.surfmesh.vtk.exists()
+        assert list(tmp_path.iterdir()) == []
+
+
+# --- Submesh index --------------------------------------------------------
+#
+# `.nod` maps a submesh's nodes back to its parent, `.eidx` its elements. Every
+# stem below was observed in `.claude/tree_output_of_tests.md`: the `.partN`
+# components in tmp/, and the renamed BiV surfaces they become.
+
+
+class TestSubmeshIndexConstruction:
+    def test_accepts_a_string_and_a_path(self):
+        assert SubmeshIndex("/t/biv_epi").stem == Path("/t/biv_epi")
+        assert SubmeshIndex(Path("/t/biv_epi")).stem == Path("/t/biv_epi")
+
+    def test_is_frozen(self):
+        index = SubmeshIndex("/t/biv_epi")
+        with pytest.raises(Exception):
+            index.stem = Path("/elsewhere")
+
+    def test_equal_stems_compare_equal(self):
+        assert SubmeshIndex("/t/biv_epi") == SubmeshIndex(Path("/t/biv_epi"))
+
+    @pytest.mark.parametrize("extension", [".nod", ".eidx"])
+    def test_a_concrete_file_is_refused(self, extension):
+        with pytest.raises(ValueError, match="without an extension"):
+            SubmeshIndex(f"/t/biv_epi{extension}")
+
+    def test_allows_a_partn_stem(self):
+        # `.part0` is a real stem segment, not an extension to be stripped.
+        assert SubmeshIndex("/t/epi_endo_cc.part0").stem.name == "epi_endo_cc.part0"
+
+
+class TestSubmeshIndexPair:
+    @pytest.mark.parametrize(
+        "stem, nod, eidx",
+        [
+            ("/t/biv_epi", "biv_epi.nod", "biv_epi.eidx"),
+            ("/t/biv_lvendo", "biv_lvendo.nod", "biv_lvendo.eidx"),
+            ("/t/biv_septum", "biv_septum.nod", "biv_septum.eidx"),
+            (
+                "/t/lv_epi_intermediate",
+                "lv_epi_intermediate.nod",
+                "lv_epi_intermediate.eidx",
+            ),
+        ],
+    )
+    def test_the_names_real_runs_produce(self, stem, nod, eidx):
+        index = SubmeshIndex(stem)
+        assert index.nod.name == nod
+        assert index.eidx.name == eidx
+
+    def test_the_pair_lands_beside_the_stem(self):
+        index = SubmeshIndex("/data/BiV/biv_epi")
+        assert index.nod.parent == Path("/data/BiV")
+        assert index.eidx.parent == Path("/data/BiV")
+
+
+class TestSubmeshIndexDottedStemsAreNotTruncated:
+    @pytest.mark.parametrize(
+        "stem, expected_eidx",
+        [
+            ("epi_endo_cc.part0", "epi_endo_cc.part0.eidx"),
+            ("epi_endo_cc.part2", "epi_endo_cc.part2.eidx"),
+            ("septum_cc.part1", "septum_cc.part1.eidx"),
+        ],
+    )
+    def test_every_dot_segment_survives(self, stem, expected_eidx):
+        assert SubmeshIndex(f"/t/{stem}").eidx.name == expected_eidx
+
+    def test_with_suffix_would_have_truncated(self):
+        # Pins the bug, not merely the fix. This is the shape of the latent
+        # defect at utilities/mesh.py:225-226.
+        stem = Path("/t/epi_endo_cc.part0")
+        assert stem.with_suffix(".eidx").name == "epi_endo_cc.eidx"
+        assert SubmeshIndex(stem).eidx.name == "epi_endo_cc.part0.eidx"
+
+
+class TestSubmeshIndexIsReachedThroughCarpMesh:
+    def test_a_mesh_offers_its_index(self):
+        mesh = CarpMesh("/data/BiV/biv_epi")
+        assert isinstance(mesh.index, SubmeshIndex)
+        assert mesh.index.nod == Path("/data/BiV/biv_epi.nod")
+        assert mesh.index.eidx == Path("/data/BiV/biv_epi.eidx")
+
+    def test_the_index_shares_the_meshs_stem(self):
+        mesh = CarpMesh("/t/septum_cc.part1")
+        assert mesh.index.stem == mesh.stem
+        assert mesh.index.eidx.name == "septum_cc.part1.eidx"
+
+    @pytest.mark.parametrize("absent", ["nod", "eidx"])
+    def test_the_mesh_does_not_advertise_them_directly(self, absent):
+        # A trunk mesh was never carved out of anything and has no index pair.
+        # Reaching them goes through `.index`, which names the precondition.
+        assert not hasattr(CarpMesh("/data/BiV/BiV"), absent)
+
+
+class TestSurfaceMeshShareTheNodOwner:
+    def test_nod_delegates_rather_than_restating(self, monkeypatch):
+        # The constraint this handle exists to satisfy: one definition of
+        # where `.nod` sits, not two that can drift apart.
+        #
+        # Comparing values cannot tell delegation from a second, identical
+        # implementation — both spell the same path. So redefine the owner and
+        # require the surfmesh to follow it. A restated `_sibling(".nod")` here
+        # would ignore this and keep returning the real name.
+        monkeypatch.setattr(
+            SubmeshIndex, "nod", property(lambda self: Path(f"{self.stem}.SENTINEL"))
+        )
+        assert SURFACE.surfmesh.nod == Path("/data/BiV/tmp/septum.surfmesh.SENTINEL")
+
+    def test_nod_still_spells_the_recorded_name(self):
+        assert SURFACE.surfmesh.nod.name == "septum.surfmesh.nod"
+
+    @pytest.mark.parametrize(
+        "stem, expected",
+        [
+            ("/t/base", "base.surfmesh.nod"),
+            ("/t/epi_endo", "epi_endo.surfmesh.nod"),
+            ("/t/septum", "septum.surfmesh.nod"),
+        ],
+    )
+    def test_the_three_surfmesh_nods_real_runs_produce(self, stem, expected):
+        assert CarpSurface(stem).surfmesh.nod.name == expected
+
+    def test_a_surfmesh_has_no_eidx(self):
+        # No recorded run produced one. Exposing the pair here would advertise
+        # a file that is never written.
+        assert not hasattr(SURFACE.surfmesh, "eidx")
+        assert not hasattr(SURFACE.surfmesh, "index")
+
+
+class TestSubmeshIndexInterop:
+    def test_is_os_pathlike_and_yields_the_stem(self):
+        index = SubmeshIndex("/data/BiV/biv_epi")
+        assert os.fspath(index) == "/data/BiV/biv_epi"
+        assert str(index) == "/data/BiV/biv_epi"
+
+    def test_touches_no_filesystem(self, tmp_path):
+        index = SubmeshIndex(tmp_path / "absent")
+        assert not index.nod.exists()
+        assert not index.eidx.exists()
         assert list(tmp_path.iterdir()) == []
