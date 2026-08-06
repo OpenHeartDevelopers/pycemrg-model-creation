@@ -22,22 +22,92 @@ system. Existence checks belong to the caller.
 
 from dataclasses import dataclass
 from pathlib import Path
-
-# Extensions CarpMesh owns. A stem ending in one of these is almost always a
-# caller that passed a concrete file where a stem was wanted.
-_CARP_MESH_EXTENSIONS = (".pts", ".elem", ".lon", ".vtk", ".bpts", ".belem")
-
-# The same guard for CarpSurface. `.vtx` is here because a surface's companion
-# is `<stem>.surf.vtx`, so a stem ending in `.vtx` is a caller one level too deep.
-_CARP_SURFACE_EXTENSIONS = (".surf", ".surfmesh", ".neubc", ".vtx")
-
-# The index pair. `SubmeshIndex` is the single owner of where `.nod` lives;
-# both `CarpMesh` and `SurfaceMesh` reach it rather than restating it.
-_SUBMESH_INDEX_EXTENSIONS = (".nod", ".eidx")
+from typing import ClassVar
 
 
 @dataclass(frozen=True)
-class SubmeshIndex:
+class _StemHandle:
+    """
+    Shared mechanics for every handle here: a stem, and siblings built by
+    *appending* to it.
+
+    Private on purpose. It exists to state the stem arithmetic once, not to
+    make the handles interchangeable — nothing dispatches on this type, and
+    an ``isinstance`` check against it would be asserting something the
+    design does not promise.
+
+    The rule for what may live here: **anything derivable from the stem
+    alone.** ``name``, ``directory`` and ``_sibling`` qualify — every handle
+    can answer them honestly. A *family member* (``.pts``, ``.surf``,
+    ``.nod``) never does: naming one asserts that a tool writes it, and that
+    claim differs per handle. It is why ``SurfaceMesh`` is not a
+    ``CarpMesh``, and this base must not undo it.
+
+    Subclasses declare which concrete-file extensions they refuse via
+    ``_refuses``. It is a ``ClassVar``, so the dataclass machinery leaves it
+    as a class attribute rather than turning it into a second constructor
+    argument. The default ``()`` refuses nothing, since ``x in ()`` is always
+    false — that is a real setting, not a placeholder.
+
+    Every subclass must itself be ``@dataclass(frozen=True)``: mixing frozen
+    and non-frozen in one hierarchy raises ``TypeError`` at class creation.
+    """
+
+    stem: Path
+
+    # Extensions this handle refuses as a stem. A stem ending in one of them is
+    # almost always a caller that passed a concrete file where a stem was wanted.
+    _refuses: ClassVar[tuple[str, ...]] = ()
+
+    def __post_init__(self) -> None:
+        # Accept str for convenience, but store a Path. Assigning through
+        # object.__setattr__ is how a frozen dataclass normalises its fields.
+        object.__setattr__(self, "stem", Path(self.stem))
+
+        if self.stem.suffix in self._refuses:
+            name = type(self).__name__
+            raise ValueError(
+                f"{name} takes a stem without an extension, got '{self.stem}'. "
+                f"Use {name}('{self.stem.with_suffix('')}') instead."
+            )
+
+    # -- Identity -------------------------------------------------------
+
+    @property
+    def name(self) -> str:
+        """The stem's basename, e.g. 'BiV'. Used by tools that want a bare name."""
+        return self.stem.name
+
+    @property
+    def directory(self) -> Path:
+        """The directory holding the family."""
+        return self.stem.parent
+
+    # -- Internals ------------------------------------------------------
+
+    def _sibling(self, extension: str) -> Path:
+        """
+        Append an extension to the stem.
+
+        Deliberately not `with_suffix`: stems here routinely carry dots
+        (`epi_endo.surfmesh`, `septum_cc.part0`) and those dot-segments are
+        meaningful, not extensions to be replaced.
+        """
+        return self.stem.parent / f"{self.stem.name}{extension}"
+
+    # -- Interop --------------------------------------------------------
+
+    def __str__(self) -> str:
+        return str(self.stem)
+
+    def __fspath__(self) -> str:
+        # Makes the handle os.PathLike, so it can be handed to a wrapper
+        # wherever a stem is expected without an explicit conversion.
+        return str(self.stem)
+
+
+@dataclass(frozen=True)
+class SubmeshIndex(_StemHandle):
     """
     The ``.nod``/``.eidx`` pair written when a submesh is carved from a parent.
 
@@ -61,16 +131,7 @@ class SubmeshIndex:
         PosixPath('/tmp/epi_endo_cc.part0.eidx')
     """
 
-    stem: Path
-
-    def __post_init__(self) -> None:
-        object.__setattr__(self, "stem", Path(self.stem))
-
-        if self.stem.suffix in _SUBMESH_INDEX_EXTENSIONS:
-            raise ValueError(
-                f"SubmeshIndex takes a stem without an extension, got '{self.stem}'. "
-                f"Use SubmeshIndex('{self.stem.with_suffix('')}') instead."
-            )
+    _refuses: ClassVar[tuple[str, ...]] = (".nod", ".eidx")
 
     @property
     def nod(self) -> Path:
@@ -82,24 +143,9 @@ class SubmeshIndex:
         """Element index map back to the parent mesh, binary."""
         return self._sibling(".eidx")
 
-    def _sibling(self, extension: str) -> Path:
-        """
-        Append an extension to the stem.
-
-        Deliberately not `with_suffix`: the components these belong to carry
-        `.partN` stems, whose dot-segment is meaningful.
-        """
-        return self.stem.parent / f"{self.stem.name}{extension}"
-
-    def __str__(self) -> str:
-        return str(self.stem)
-
-    def __fspath__(self) -> str:
-        return str(self.stem)
-
 
 @dataclass(frozen=True)
-class CarpMesh:
+class CarpMesh(_StemHandle):
     """
     A CARP volumetric mesh, addressed by its stem.
 
@@ -120,30 +166,16 @@ class CarpMesh:
         '/data/surfaces_uvc/BiV/BiV'
     """
 
-    stem: Path
-
-    def __post_init__(self) -> None:
-        # Accept str for convenience, but store a Path. Assigning through
-        # object.__setattr__ is how a frozen dataclass normalises its fields.
-        object.__setattr__(self, "stem", Path(self.stem))
-
-        if self.stem.suffix in _CARP_MESH_EXTENSIONS:
-            raise ValueError(
-                f"CarpMesh takes a stem without an extension, got '{self.stem}'. "
-                f"Use CarpMesh('{self.stem.with_suffix('')}') instead."
-            )
-
-    # -- Identity -------------------------------------------------------
-
-    @property
-    def name(self) -> str:
-        """The stem's basename, e.g. 'BiV'. Used by tools that want a bare name."""
-        return self.stem.name
-
-    @property
-    def directory(self) -> Path:
-        """The directory holding the family."""
-        return self.stem.parent
+    # A stem ending in one of these is almost always a caller that passed a
+    # concrete file where a stem was wanted.
+    _refuses: ClassVar[tuple[str, ...]] = (
+        ".pts",
+        ".elem",
+        ".lon",
+        ".vtk",
+        ".bpts",
+        ".belem",
+    )
 
     # -- The family -----------------------------------------------------
 
@@ -231,30 +263,9 @@ class CarpMesh:
             )
         return self._sibling(f".{name}{extension}")
 
-    # -- Internals ------------------------------------------------------
-
-    def _sibling(self, extension: str) -> Path:
-        """
-        Append an extension to the stem.
-
-        Deliberately not `with_suffix`: the stem may itself contain dots and
-        those dot-segments are meaningful, not extensions to be replaced.
-        """
-        return self.stem.parent / f"{self.stem.name}{extension}"
-
-    # -- Interop --------------------------------------------------------
-
-    def __str__(self) -> str:
-        return str(self.stem)
-
-    def __fspath__(self) -> str:
-        # Makes the handle os.PathLike, so it can be handed to a wrapper
-        # wherever a stem is expected without an explicit conversion.
-        return str(self.stem)
-
 
 @dataclass(frozen=True)
-class SurfaceMesh:
+class SurfaceMesh(_StemHandle):
     """
     meshtool's ``.surfmesh`` companion to an extracted surface.
 
@@ -272,10 +283,9 @@ class SurfaceMesh:
         PosixPath('/data/tmp/septum.surfmesh.vtk')
     """
 
-    stem: Path
-
-    def __post_init__(self) -> None:
-        object.__setattr__(self, "stem", Path(self.stem))
+    # Refuses nothing: a `.surfmesh` stem legitimately ends in a dot-segment,
+    # and no guard was ever asserted here. `()` is the setting, not a gap.
+    _refuses: ClassVar[tuple[str, ...]] = ()
 
     @property
     def vtk(self) -> Path:
@@ -299,18 +309,9 @@ class SurfaceMesh:
         """Face connectivity. Not always written."""
         return self._sibling(".fcon")
 
-    def _sibling(self, extension: str) -> Path:
-        return self.stem.parent / f"{self.stem.name}{extension}"
-
-    def __str__(self) -> str:
-        return str(self.stem)
-
-    def __fspath__(self) -> str:
-        return str(self.stem)
-
 
 @dataclass(frozen=True)
-class CarpSurface:
+class CarpSurface(_StemHandle):
     """
     A surface extracted by ``meshtool extract surface``, addressed by its stem.
 
@@ -335,26 +336,9 @@ class CarpSurface:
 
     stem: Path
 
-    def __post_init__(self) -> None:
-        object.__setattr__(self, "stem", Path(self.stem))
-
-        if self.stem.suffix in _CARP_SURFACE_EXTENSIONS:
-            raise ValueError(
-                f"CarpSurface takes a stem without an extension, got '{self.stem}'. "
-                f"Use CarpSurface('{self.stem.with_suffix('')}') instead."
-            )
-
-    # -- Identity -------------------------------------------------------
-
-    @property
-    def name(self) -> str:
-        """The stem's basename, e.g. 'septum'."""
-        return self.stem.name
-
-    @property
-    def directory(self) -> Path:
-        """The directory holding the family."""
-        return self.stem.parent
+    # `.vtx` is here because a surface's companion is `<stem>.surf.vtx`, so a
+    # stem ending in `.vtx` is a caller one level too deep.
+    _refuses: ClassVar[tuple[str, ...]] = (".surf", ".surfmesh", ".neubc", ".vtx")
 
     # -- The family -----------------------------------------------------
 
@@ -377,24 +361,3 @@ class CarpSurface:
     def surfmesh(self) -> SurfaceMesh:
         """The ``.surfmesh`` companion family, as its own handle."""
         return SurfaceMesh(self._sibling(".surfmesh"))
-
-    # -- Internals ------------------------------------------------------
-
-    def _sibling(self, extension: str) -> Path:
-        """
-        Append an extension to the stem.
-
-        Deliberately not `with_suffix`: surface stems routinely carry dots
-        (`epi_endo.surfmesh`, `septum_cc.part0`) and those segments are
-        meaningful, not extensions to be replaced.
-        """
-        return self.stem.parent / f"{self.stem.name}{extension}"
-
-    # -- Interop --------------------------------------------------------
-
-    def __str__(self) -> str:
-        return str(self.stem)
-
-    def __fspath__(self) -> str:
-        # meshtool takes the stem on the command line, as with CarpMesh.
-        return str(self.stem)
