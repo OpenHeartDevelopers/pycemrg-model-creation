@@ -107,8 +107,12 @@ class ModelCreationPathBuilder:
         self.la_dir = self.root_output_dir / "LA"
         self.ra_dir = self.root_output_dir / "RA"
 
-        # Temporary directories for intermediate files
-        self.biv_tmp_dir = self.biv_dir / "tmp"
+        # Temporary directories for intermediate files. There is no BiV
+        # equivalent: `VentricularSurfacePaths.tmp_dir` is a property, so the
+        # BiV scratch name is owned by the contract and restating it here is
+        # exactly the drift this refactor removes. LA/RA remain because their
+        # contracts still carry `tmp_dir` as a field, and because the mkdir
+        # below needs them.
         self.la_tmp_dir = self.la_dir / "tmp"
         self.ra_tmp_dir = self.ra_dir / "tmp"
 
@@ -140,10 +144,6 @@ class ModelCreationPathBuilder:
             # builder no longer restates them — there was one spelling of
             # `biv_epi` here and another in the logic, and they could drift.
             output_dir=self.biv_dir,
-            # Discovered-outputs stems, still passed until they become a
-            # returned type rather than a predicted name.
-            epi_endo_cc_base=self.biv_tmp_dir / "epi_endo_cc",
-            septum_cc_base=self.biv_tmp_dir / "septum_cc",
             # VTX files
             base_vtx=self.biv_dir / "biv.base.vtx",
             epi_vtx=self.biv_dir / "biv.epi.vtx",

@@ -70,17 +70,12 @@ class VentricularSurfacePaths:
     handle; ``extract_surface`` would happen to work, and is given the stem
     anyway so the boundary is one rule rather than three special cases.
 
-    Two groups remain fields although they look derivable, each for a stated
-    reason rather than by oversight:
-
-    - ``epi_endo_cc_base`` / ``septum_cc_base`` are the stems handed to
-      ``meshtool extract unreachable``, whose ``.partN`` arity is discovered at
-      run time. They are due to become a *returned* discovered-outputs type,
-      not properties, so they are left alone rather than converted twice.
-    - The six ``*_vtx`` names are held pending confirmation of what each is
-      for downstream. ``rv_septum_point_vtx`` in particular has no producer in
-      this flow — it is threaded into the BiV mesh stage's ``vtx_files_to_map``
-      and appears in no recorded run.
+    One group remains fields although it looks derivable, for a stated reason
+    rather than by oversight: the six ``*_vtx`` names are held pending
+    confirmation of what each is for downstream. ``rv_septum_point_vtx`` in
+    particular has no producer in this flow — it is threaded into the BiV mesh
+    stage's ``vtx_files_to_map`` and appears in no recorded run, and is half
+    retired already.
     """
 
     # -- Inputs ---------------------------------------------------------
@@ -94,11 +89,6 @@ class VentricularSurfacePaths:
     # Output root for this chamber, e.g. <root>/BiV. Not derivable from
     # `mesh`: the input mesh lives in a different tree from the outputs.
     output_dir: Path
-
-    # -- Discovered outputs, pending their own return type ---------------
-
-    epi_endo_cc_base: Path  # stem for the epi/endo connected components
-    septum_cc_base: Path  # stem for the septum connected components
 
     # -- VTX files for UVC (in output_dir) -------------------------------
 
@@ -138,6 +128,24 @@ class VentricularSurfacePaths:
     def lv_epi_intermediate(self) -> Path:
         """The non-septum component of the septum extraction."""
         return self.tmp_dir / "lv_epi_intermediate"
+
+    # -- Connected-component prefixes (in tmp_dir) -----------------------
+    #
+    # These are *predicted* names, not discovered ones: each is the stem
+    # handed to `meshtool extract unreachable` via `-submsh=`, and then to
+    # `find_numbered_parts` as the prefix to search for. The tool appends
+    # `.partN` at an arity only known at run time, and that arity comes back
+    # as a return value — it is never named here.
+
+    @property
+    def epi_endo_cc_base(self) -> Path:
+        """Prefix for the epi/endo connected components."""
+        return self.tmp_dir / "epi_endo_cc"
+
+    @property
+    def septum_cc_base(self) -> Path:
+        """Prefix for the septum connected components."""
+        return self.tmp_dir / "septum_cc"
 
     # -- Final surfaces (in output_dir) ----------------------------------
 

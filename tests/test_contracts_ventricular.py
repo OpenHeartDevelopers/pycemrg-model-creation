@@ -30,8 +30,6 @@ def make_paths(output_dir: Path = BIV) -> VentricularSurfacePaths:
     return VentricularSurfacePaths(
         mesh=CarpMesh(MESH_STEM),
         output_dir=output_dir,
-        epi_endo_cc_base=output_dir / "tmp" / "epi_endo_cc",
-        septum_cc_base=output_dir / "tmp" / "septum_cc",
         base_vtx=output_dir / "biv.base.vtx",
         epi_vtx=output_dir / "biv.epi.vtx",
         lv_endo_vtx=output_dir / "biv.lvendo.vtx",
@@ -118,22 +116,38 @@ class TestContractDiscipline:
         with pytest.raises(Exception):
             make_paths().output_dir = Path("/elsewhere")
 
-    def test_only_the_real_fields_are_constructor_arguments(self):
-        # The nine derived names must not be accepted as kwargs again: that
-        # is how the builder and the contract drifted apart before.
+    @pytest.mark.parametrize(
+        "removed_name",
+        [
+            "tmp_dir",  # removed in slice 3a step 5
+            "base_surface",
+            "epi_endo_combined",
+            "septum_raw",
+            "lv_epi_intermediate",
+            "epi_surface",
+            "lv_endo_surface",
+            "rv_endo_surface",
+            "septum_surface",
+            "epi_endo_cc_base",  # became properties after step 5
+            "septum_cc_base",
+        ],
+    )
+    def test_a_derived_name_is_not_a_constructor_argument(self, removed_name):
+        # Each derived name must be rejected *individually*. Passing them all
+        # in one call would raise on the first and prove nothing about the
+        # rest — which is how this test read before `epi_endo_cc_base` and
+        # `septum_cc_base` joined the list.
         with pytest.raises(TypeError):
             VentricularSurfacePaths(
                 mesh=CarpMesh(MESH_STEM),
                 output_dir=BIV,
-                epi_endo_cc_base=TMP / "epi_endo_cc",
-                septum_cc_base=TMP / "septum_cc",
                 base_vtx=BIV / "biv.base.vtx",
                 epi_vtx=BIV / "biv.epi.vtx",
                 lv_endo_vtx=BIV / "biv.lvendo.vtx",
                 rv_endo_vtx=BIV / "biv.rvendo.vtx",
                 septum_vtx=BIV / "biv.septum.vtx",
                 rv_septum_point_vtx=BIV / "biv.rvsept_pt.vtx",
-                tmp_dir=TMP,  # removed in slice 3a step 5
+                **{removed_name: TMP},
             )
 
     def test_constructing_touches_no_disk(self, tmp_path):
