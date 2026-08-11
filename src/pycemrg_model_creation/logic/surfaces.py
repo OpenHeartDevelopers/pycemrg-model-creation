@@ -99,7 +99,7 @@ class SurfaceLogic:
             op_tag = f"{ventricle_tags}:{valve_tags}"
 
             self.meshtool.extract_surface(
-                input_mesh_path=paths.mesh,
+                input_mesh_path=paths.mesh.stem,
                 output_surface_path=paths.base_surface,
                 ofmt="vtk",
                 op_tag_base=op_tag,
@@ -140,7 +140,7 @@ class SurfaceLogic:
             op_tag = f"{ventricle_tags}-{valve_tags}"
 
             self.meshtool.extract_surface(
-                input_mesh_path=paths.mesh,
+                input_mesh_path=paths.mesh.stem,
                 output_surface_path=paths.epi_endo_combined,
                 ofmt="vtk",
                 op_tag_base=op_tag,
@@ -190,7 +190,7 @@ class SurfaceLogic:
 
             # Step 5: Get LV blood pool center for distance calculations
             mesh_pts, mesh_elem = mshu.read_carp_mesh(
-                paths.mesh, elem_type=ElemType.Tt, read_tags=True
+                paths.mesh.stem, elem_type=ElemType.Tt, read_tags=True
             )
 
             lv_tag = self.labels.get_values_from_names(["LV"])[0]
@@ -286,7 +286,7 @@ class SurfaceLogic:
             op_tag = f"{lv_tags}-{exclude_tags}"
 
             self.meshtool.extract_surface(
-                input_mesh_path=paths.mesh,
+                input_mesh_path=paths.mesh.stem,
                 output_surface_path=paths.septum_raw,
                 ofmt="vtk",
                 op_tag_base=op_tag,
@@ -405,7 +405,7 @@ class SurfaceLogic:
                 )
 
             mshu.surf2vtk(
-                mesh_base_path=paths.mesh,
+                mesh_base_path=paths.mesh.stem,
                 surface_path=paths.epi_surface,
                 output_vtk_path=CarpMesh(paths.epi_surface).vtk,
             )
@@ -456,7 +456,7 @@ class SurfaceLogic:
             # This is not a final artifact, so it goes in the temporary directory.
             debug_vtk_path = paths.tmp_dir / CarpMesh(paths.rv_endo_surface).vtk.name
             mshu.surf2vtk(
-                mesh_base_path=paths.mesh,
+                mesh_base_path=paths.mesh.stem,
                 surface_path=paths.rv_endo_surface,
                 output_vtk_path=debug_vtk_path,
             )

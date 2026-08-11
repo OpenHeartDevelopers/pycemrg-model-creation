@@ -6,6 +6,7 @@ from typing import List
 
 from ..meshpaths import CarpMesh
 
+
 @dataclass(frozen=True)
 class MeshPostprocessingPaths:
     """
@@ -37,7 +38,7 @@ class MeshPostprocessingPaths:
     output_mesh_base: CarpMesh
 
     @property
-    def output_dir(self) -> Path: 
+    def output_dir(self) -> Path:
         """Directory holding the refined mesh. The output mesh's own directory."""
         return self.output_mesh_base.directory
 
@@ -45,6 +46,7 @@ class MeshPostprocessingPaths:
     def tmp_dir(self) -> Path:
         """Temporary directory for intermediate files. The intermediate mesh's own directory."""
         return self.intermediate_myocardium_mesh.directory
+
 
 @dataclass(frozen=True)
 class VentricularSurfacePaths:
@@ -61,6 +63,13 @@ class VentricularSurfacePaths:
     reassigned would defeat the point. Constructing this touches no disk —
     directory *creation* belongs to ``SurfaceLogic``, not to naming.
 
+    Note the wrapper boundary: ``MeshtoolWrapper`` and the ``utilities.mesh``
+    readers take plain ``Path`` stems and reattach extensions themselves, so
+    the logic layer passes ``mesh.stem`` when it calls one and uses the handle
+    everywhere else. ``surf2vtk`` and ``read_carp_mesh`` would raise on a
+    handle; ``extract_surface`` would happen to work, and is given the stem
+    anyway so the boundary is one rule rather than three special cases.
+
     Two groups remain fields although they look derivable, each for a stated
     reason rather than by oversight:
 
@@ -76,11 +85,11 @@ class VentricularSurfacePaths:
 
     # -- Inputs ---------------------------------------------------------
 
-    # Full four-chamber mesh base name, without extensions. Still a bare
-    # `Path`: converting it to a `CarpMesh` is atomic across this contract,
-    # `builders.py` and every wrapper call site in `surfaces.py`, so it is a
-    # step of its own rather than a half-applied type here.
-    mesh: Path
+    # The four-chamber mesh this chamber is cut from. A handle, so the
+    # extensions are asked of it rather than reattached by each caller.
+    # The wrappers still take plain stems, so the logic hands them
+    # `paths.mesh.stem` — see the class docstring on that boundary.
+    mesh: CarpMesh
 
     # Output root for this chamber, e.g. <root>/BiV. Not derivable from
     # `mesh`: the input mesh lives in a different tree from the outputs.
@@ -233,6 +242,7 @@ class UVCSurfaceExtractionPaths:
     la_mesh: AtrialMeshPaths
     ra_mesh: AtrialMeshPaths
 
+
 @dataclass(frozen=True)
 class VentricularUVCPaths:
     """
@@ -268,3 +278,4 @@ class VentricularUVCPaths:
     # location is the caller's to choose, not mguvc's to mandate; it is put
     # beside the mesh so that output_dir is not created early.
     etags_file: Path
+

@@ -17,16 +17,18 @@ import pytest
 
 from pycemrg_model_creation.logic.builders import ModelCreationPathBuilder
 from pycemrg_model_creation.logic.contracts import VentricularSurfacePaths
+from pycemrg_model_creation.meshpaths import CarpMesh
 
 ROOT = Path("/out")
 BIV = ROOT / "BiV"
 TMP = BIV / "tmp"
+MESH_STEM = Path("/in/heart")
 
 
 def make_paths(output_dir: Path = BIV) -> VentricularSurfacePaths:
     """A contract with only its real fields supplied."""
     return VentricularSurfacePaths(
-        mesh=Path("/in/heart"),
+        mesh=CarpMesh(MESH_STEM),
         output_dir=output_dir,
         epi_endo_cc_base=output_dir / "tmp" / "epi_endo_cc",
         septum_cc_base=output_dir / "tmp" / "septum_cc",
@@ -121,7 +123,7 @@ class TestContractDiscipline:
         # is how the builder and the contract drifted apart before.
         with pytest.raises(TypeError):
             VentricularSurfacePaths(
-                mesh=Path("/in/heart"),
+                mesh=CarpMesh(MESH_STEM),
                 output_dir=BIV,
                 epi_endo_cc_base=TMP / "epi_endo_cc",
                 septum_cc_base=TMP / "septum_cc",
@@ -193,3 +195,45 @@ class TestBuilderAndContractAgree:
         for chamber in ("LA", "RA"):
             assert (tmp_path / chamber).is_dir()
             assert (tmp_path / chamber / "tmp").is_dir()
+
+
+class TestTheMeshIsAHandle:
+    """
+    `mesh` became a `CarpMesh`, and the layout test above deliberately does
+    not cover it — every name it checks is derived from `output_dir`, not
+    from the mesh. Without these, the builder could hand the contract a bare
+    `Path` and nothing would notice: dataclasses do no runtime type checking.
+    """
+
+    def test_the_builder_yields_a_handle(self, tmp_path):
+        paths = ModelCreationPathBuilder(tmp_path).build_ventricular_paths(MESH_STEM)
+
+        assert isinstance(paths.mesh, CarpMesh)
+
+    def test_the_stem_keeps_its_directory(self, tmp_path):
+        # The regression that matters. `_StemHandle.stem` is the *full* path
+        # without extensions; `Path.stem` is the bare basename. The six
+        # wrapper sites in `surfaces.py` pass `paths.mesh.stem`, so anyone
+        # "simplifying" that to `Path.stem` semantics would send `heart`
+        # where `/in/heart` belongs — and meshtool would read nothing.
+        paths = ModelCreationPathBuilder(tmp_path).build_ventricular_paths(MESH_STEM)
+
+        assert paths.mesh.stem == MESH_STEM
+        assert paths.mesh.stem != Path(MESH_STEM.name)
+
+    def test_a_handle_survives_being_passed_in(self, tmp_path):
+        # `build_all` passes a `Path`, but a library user holding a handle
+        # should not have to unwrap it. Re-wrapping must be idempotent.
+        builder = ModelCreationPathBuilder(tmp_path)
+
+        assert builder.build_ventricular_paths(
+            CarpMesh(MESH_STEM)
+        ).mesh.stem == builder.build_ventricular_paths(MESH_STEM).mesh.stem
+
+    def test_a_stem_carrying_an_extension_is_refused(self, tmp_path):
+        # New reachable behaviour: before the conversion this sailed through
+        # and produced `heart.pts.pts` downstream.
+        builder = ModelCreationPathBuilder(tmp_path)
+
+        with pytest.raises(ValueError, match="without an extension"):
+            builder.build_ventricular_paths(Path("/in/heart.pts"))

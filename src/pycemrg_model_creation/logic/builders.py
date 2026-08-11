@@ -121,11 +121,20 @@ class ModelCreationPathBuilder:
         for d in [self.la_dir, self.ra_dir, self.la_tmp_dir, self.ra_tmp_dir]:
             d.mkdir(parents=True, exist_ok=True)
 
-    def build_ventricular_paths(self, mesh_base_path: Path) -> VentricularSurfacePaths:
-        """Constructs the VentricularSurfacePaths contract."""
+    def build_ventricular_paths(
+        self, mesh_base_path: Union[CarpMesh, Path, str]
+    ) -> VentricularSurfacePaths:
+        """
+        Constructs the VentricularSurfacePaths contract.
+
+        Args:
+            mesh_base_path: The four-chamber mesh stem, without extensions. A
+                            stem carrying a mesh extension is an error, and
+                            CarpMesh raises rather than silently truncating it.
+        """
         return VentricularSurfacePaths(
             # Input
-            mesh=mesh_base_path,
+            mesh=CarpMesh(mesh_base_path),
             # Output root. `tmp_dir` and every intermediate and final surface
             # name is now derived from this by the contract itself, so the
             # builder no longer restates them — there was one spelling of
