@@ -79,7 +79,7 @@ def test_run_ventricular_extraction_on_sample_01(tmp_path, test_data_root):
         ventricular_paths.epi_vtx,
         ventricular_paths.lv_endo_vtx,
         ventricular_paths.rv_endo_vtx,
-        ventricular_paths.septum_vtx,
+        ventricular_paths.rvsept_vtx,
         # ventricular_paths.apex_vtx,  # This is copied from a template. Not needed anymore
     ]
 

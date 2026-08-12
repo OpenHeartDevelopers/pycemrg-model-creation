@@ -107,6 +107,12 @@ class ModelCreationPathBuilder:
         self.la_dir = self.root_output_dir / "LA"
         self.ra_dir = self.root_output_dir / "RA"
 
+        # The BiV submesh, constructed once. Two contracts refer to this same
+        # mesh: `BiVMeshPaths` cuts it, and `VentricularSurfacePaths` names the
+        # boundary VTX files against it. Building it here means the stem `BiV`
+        # is spelled in one place, so the two contracts cannot disagree.
+        self.biv_mesh = CarpMesh(self.biv_dir / "BiV")
+
         # Temporary directories for intermediate files. There is no BiV
         # equivalent: `VentricularSurfacePaths.tmp_dir` is a property, so the
         # BiV scratch name is owned by the contract and restating it here is
@@ -144,14 +150,14 @@ class ModelCreationPathBuilder:
             # builder no longer restates them — there was one spelling of
             # `biv_epi` here and another in the logic, and they could drift.
             output_dir=self.biv_dir,
-            # VTX files
-            base_vtx=self.biv_dir / "biv.base.vtx",
-            epi_vtx=self.biv_dir / "biv.epi.vtx",
-            lv_endo_vtx=self.biv_dir / "biv.lvendo.vtx",
-            rv_endo_vtx=self.biv_dir / "biv.rvendo.vtx",
-            septum_vtx=self.biv_dir / "biv.septum.vtx",
-            # apex_vtx=self.biv_dir / "biv.lvapex.vtx", # Not anymore
-            rv_septum_point_vtx=self.biv_dir / "biv.rvsept_pt.vtx",
+            # The BiV submesh the boundary VTX files are named against. The
+            # five names are now properties on the contract, asked of this
+            # handle, so the builder no longer restates them.
+            #
+            # `apex_vtx` stays retired: for BiV, mguvc *writes* `BiV.lvapex.vtx`.
+            # `rv_septum_point_vtx` is gone from here too — mguvc asks for
+            # `rvsept_pt` only under `--output-model lv`, which BiV never uses.
+            submesh=self.biv_mesh,
         )
 
     def build_atrial_paths(
@@ -191,15 +197,24 @@ class ModelCreationPathBuilder:
         """Constructs the BiVMeshPaths contract."""
         return BiVMeshPaths(
             source_mesh=mesh_base_path,
-            output_mesh=self.biv_dir / "myocardium_biv",
+            # Stem `BiV`, not `myocardium_biv`. This is mguvc's vocabulary, and
+            # it is what the UVC stage already expects beside the mesh
+            # (`BiV.pts`, `BiV.base.vtx`). This renames files on disk.
+            output_mesh=self.biv_mesh,
             output_dir=self.biv_dir,
+            # Every boundary the surface stage writes must be remapped, or the
+            # UVC stage reads four-chamber indices against a BiV mesh.
+            #
+            # This list used to name `rv_septum_point_vtx`, which nothing in
+            # this flow writes, and to omit `rvsept`, which mguvc requires. So
+            # it asked meshtool to map a file that did not exist and skipped one
+            # that did.
             vtx_files_to_map=[
                 ventricular_paths.base_vtx,
                 ventricular_paths.epi_vtx,
                 ventricular_paths.lv_endo_vtx,
                 ventricular_paths.rv_endo_vtx,
-                # ventricular_paths.apex_vtx, # Not anymore
-                ventricular_paths.rv_septum_point_vtx,
+                ventricular_paths.rvsept_vtx,
             ],
             mapped_vtx_output_dir=self.biv_dir / "biv",
         )

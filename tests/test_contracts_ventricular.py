@@ -18,6 +18,7 @@ import pytest
 from pycemrg_model_creation.logic.builders import ModelCreationPathBuilder
 from pycemrg_model_creation.logic.contracts import VentricularSurfacePaths
 from pycemrg_model_creation.meshpaths import CarpMesh
+from pycemrg_model_creation.tools.mguvc import UvcBoundary, boundary_inputs
 
 ROOT = Path("/out")
 BIV = ROOT / "BiV"
@@ -30,12 +31,7 @@ def make_paths(output_dir: Path = BIV) -> VentricularSurfacePaths:
     return VentricularSurfacePaths(
         mesh=CarpMesh(MESH_STEM),
         output_dir=output_dir,
-        base_vtx=output_dir / "biv.base.vtx",
-        epi_vtx=output_dir / "biv.epi.vtx",
-        lv_endo_vtx=output_dir / "biv.lvendo.vtx",
-        rv_endo_vtx=output_dir / "biv.rvendo.vtx",
-        septum_vtx=output_dir / "biv.septum.vtx",
-        rv_septum_point_vtx=output_dir / "biv.rvsept_pt.vtx",
+        submesh=CarpMesh(output_dir / "BiV"),
     )
 
 
@@ -130,6 +126,11 @@ class TestContractDiscipline:
             "septum_surface",
             "epi_endo_cc_base",  # became properties after step 5
             "septum_cc_base",
+            "base_vtx",  # became properties in the VTX-chain step
+            "epi_vtx",
+            "lv_endo_vtx",
+            "rv_endo_vtx",
+            "rvsept_vtx",
         ],
     )
     def test_a_derived_name_is_not_a_constructor_argument(self, removed_name):
@@ -141,12 +142,7 @@ class TestContractDiscipline:
             VentricularSurfacePaths(
                 mesh=CarpMesh(MESH_STEM),
                 output_dir=BIV,
-                base_vtx=BIV / "biv.base.vtx",
-                epi_vtx=BIV / "biv.epi.vtx",
-                lv_endo_vtx=BIV / "biv.lvendo.vtx",
-                rv_endo_vtx=BIV / "biv.rvendo.vtx",
-                septum_vtx=BIV / "biv.septum.vtx",
-                rv_septum_point_vtx=BIV / "biv.rvsept_pt.vtx",
+                submesh=CarpMesh(BIV / "BiV"),
                 **{removed_name: TMP},
             )
 
@@ -163,7 +159,39 @@ class TestBuilderAndContractAgree:
     checks that what it *does* supply still yields the same tree.
     """
 
-    def test_every_path_matches_the_pre_refactor_layout(self, tmp_path):
+    def test_the_boundary_vtx_names_are_mguvcs_own(self, tmp_path):
+        """
+        These five *did* change on disk, and were meant to.
+
+        Before: `biv.base.vtx`, and `biv.septum.vtx` for the septum. After: the
+        submesh stem plus mguvc's role vocabulary. `rvsept` is the spelling
+        mguvc opens; `septum` was ours alone and reached nothing.
+        """
+        builder = ModelCreationPathBuilder(tmp_path)
+        paths = builder.build_ventricular_paths(Path("/in/heart"))
+
+        biv = tmp_path / "BiV"
+        assert paths.base_vtx == biv / "BiV.base.vtx"
+        assert paths.epi_vtx == biv / "BiV.epi.vtx"
+        assert paths.lv_endo_vtx == biv / "BiV.lvendo.vtx"
+        assert paths.rv_endo_vtx == biv / "BiV.rvendo.vtx"
+        assert paths.rvsept_vtx == biv / "BiV.rvsept.vtx"
+
+    def test_the_boundary_names_match_what_mguvc_predicts(self, tmp_path):
+        """
+        The contract may not import `tools`, so the roles are plain strings in
+        two places. This is the only thing stopping them drifting apart.
+        """
+        builder = ModelCreationPathBuilder(tmp_path)
+        paths = builder.build_ventricular_paths(Path("/in/heart"))
+        predicted = boundary_inputs(builder.biv_mesh)
+
+        assert predicted[UvcBoundary.BASE] == paths.base_vtx
+        assert predicted[UvcBoundary.LV_ENDO] == paths.lv_endo_vtx
+        assert predicted[UvcBoundary.RV_ENDO] == paths.rv_endo_vtx
+        assert predicted[UvcBoundary.RV_SEPT] == paths.rvsept_vtx
+
+    def test_every_other_path_matches_the_pre_refactor_layout(self, tmp_path):
         builder = ModelCreationPathBuilder(tmp_path)
         paths = builder.build_ventricular_paths(Path("/in/heart"))
 
@@ -181,12 +209,6 @@ class TestBuilderAndContractAgree:
             "lv_endo_surface": biv / "biv_lvendo",
             "rv_endo_surface": biv / "biv_rvendo",
             "septum_surface": biv / "biv_septum",
-            "base_vtx": biv / "biv.base.vtx",
-            "epi_vtx": biv / "biv.epi.vtx",
-            "lv_endo_vtx": biv / "biv.lvendo.vtx",
-            "rv_endo_vtx": biv / "biv.rvendo.vtx",
-            "septum_vtx": biv / "biv.septum.vtx",
-            "rv_septum_point_vtx": biv / "biv.rvsept_pt.vtx",
         }
         actual = {name: getattr(paths, name) for name in expected}
         assert actual == expected

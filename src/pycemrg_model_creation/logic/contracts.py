@@ -70,12 +70,9 @@ class VentricularSurfacePaths:
     handle; ``extract_surface`` would happen to work, and is given the stem
     anyway so the boundary is one rule rather than three special cases.
 
-    One group remains fields although it looks derivable, for a stated reason
-    rather than by oversight: the six ``*_vtx`` names are held pending
-    confirmation of what each is for downstream. ``rv_septum_point_vtx`` in
-    particular has no producer in this flow — it is threaded into the BiV mesh
-    stage's ``vtx_files_to_map`` and appears in no recorded run, and is half
-    retired already.
+    The boundary ``*_vtx`` names were fields until we established what each
+    file is for. They are now properties over ``submesh``, so mguvc's stem and
+    its role vocabulary have one definition between them.
     """
 
     # -- Inputs ---------------------------------------------------------
@@ -90,15 +87,50 @@ class VentricularSurfacePaths:
     # `mesh`: the input mesh lives in a different tree from the outputs.
     output_dir: Path
 
-    # -- VTX files for UVC (in output_dir) -------------------------------
+    # The BiV submesh these boundaries are named against. `mguvc` builds the
+    # filenames from this stem, so the contract asks the handle rather than
+    # storing five spellings that can drift from it.
+    submesh: CarpMesh
 
-    base_vtx: Path
-    epi_vtx: Path
-    lv_endo_vtx: Path
-    rv_endo_vtx: Path
-    septum_vtx: Path
-    #    apex_vtx: Path  # retired
-    rv_septum_point_vtx: Path
+    # -- Boundary VTX files (beside the submesh) -------------------------
+    #
+    # The role strings are mguvc's own vocabulary, and there is no translation
+    # layer — see `.claude/evidence_biv_prefix.md`. `rvsept` is spelled that
+    # way here because that is what mguvc opens; do not reintroduce `septum`.
+    #
+    # mguvc reads four of these: `base`, `lvendo`, `rvendo` and `rvsept`. It
+    # derives `epi` itself and never opens `epi_vtx`. That file exists for the
+    # later fibre step, which is not ported yet, so it is not unused.
+    #
+    # `apex_vtx` is absent on purpose: for BiV, mguvc *writes* `BiV.lvapex.vtx`.
+    # `rv_septum_point_vtx` is absent too. mguvc asks for `rvsept_pt` only under
+    # `--output-model lv`. The atria borrow that mode, so the field lives on
+    # `AtrialSurfacePaths`. It belongs to the mode, not to a chamber.
+
+    @property
+    def base_vtx(self) -> Path:
+        """Valve-plane boundary. An mguvc input."""
+        return self.submesh.role("base", ".vtx")
+
+    @property
+    def epi_vtx(self) -> Path:
+        """Epicardium. **Not** an mguvc input; read by the fibre step."""
+        return self.submesh.role("epi", ".vtx")
+
+    @property
+    def lv_endo_vtx(self) -> Path:
+        """LV endocardium. An mguvc input."""
+        return self.submesh.role("lvendo", ".vtx")
+
+    @property
+    def rv_endo_vtx(self) -> Path:
+        """RV endocardium. An mguvc input."""
+        return self.submesh.role("rvendo", ".vtx")
+
+    @property
+    def rvsept_vtx(self) -> Path:
+        """Interventricular septum. An mguvc input."""
+        return self.submesh.role("rvsept", ".vtx")
 
     # -- Derived directories ---------------------------------------------
 
@@ -208,7 +240,17 @@ class BiVMeshPaths:
     """
 
     source_mesh: Path  # Full four-chamber mesh
-    output_mesh: Path  # BiV submesh
+
+    # The BiV submesh. A handle, so the boundary VTX names can be asked of it
+    # rather than restated: `mguvc` builds them from this stem, as
+    # `<stem>.base.vtx` and so on. The stem is `BiV`, which is mguvc's own
+    # vocabulary — see `.claude/evidence_biv_prefix.md`.
+    #
+    # The wrappers still reattach extensions themselves, so callers hand them
+    # `paths.output_mesh.stem`. `MeshtoolWrapper.extract_mesh` would raise on a
+    # handle, because it calls `with_suffix`.
+    output_mesh: CarpMesh
+
     output_dir: Path
 
     # VTX files to map from four-chamber to BiV

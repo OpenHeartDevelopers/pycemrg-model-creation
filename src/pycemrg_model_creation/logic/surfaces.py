@@ -489,7 +489,7 @@ class SurfaceLogic:
             (paths.epi_surface, paths.epi_vtx),
             (paths.lv_endo_surface, paths.lv_endo_vtx),
             (paths.rv_endo_surface, paths.rv_endo_vtx),
-            (paths.septum_surface, paths.septum_vtx),
+            (paths.septum_surface, paths.rvsept_vtx),
             # The 'base' surface is also required per the old contract.
             (paths.base_surface, paths.base_vtx),
         ]
@@ -665,7 +665,7 @@ class SurfaceLogic:
 
             self.meshtool.extract_mesh(
                 input_mesh_path=paths.source_mesh,
-                output_submesh_path=paths.output_mesh,
+                output_submesh_path=paths.output_mesh.stem,
                 tags=biv_tags,
                 ifmt="carp_txt",
                 normalise=False,
@@ -694,7 +694,7 @@ class SurfaceLogic:
             files_str = [str(f) for f in paths.vtx_files_to_map]
 
             self.meshtool.map(
-                submesh_path=paths.output_mesh,
+                submesh_path=paths.output_mesh.stem,
                 files_list=files_str,
                 output_folder=paths.mapped_vtx_output_dir,
                 mode="m2s",
