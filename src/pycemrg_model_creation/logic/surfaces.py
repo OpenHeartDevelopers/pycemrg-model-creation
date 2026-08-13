@@ -418,10 +418,12 @@ class SurfaceLogic:
 
     def remove_septum_from_rv_endo(self, paths: VentricularSurfacePaths) -> None:
         """
-        Removes the septum from the RV endocardial surface to isolate the free wall.
+        Writes the RV free wall as its own surface, beside the endocardium.
 
-        This process overwrites the existing RV endo surface file with the new
-        free wall surface and generates the corresponding .vtx and .vtk files.
+        The two are separate files. `rv_endo_surface` keeps the complete RV
+        endocardium, septal surface included, because that is what mguvc
+        reads; `rv_endo_nosept_surface` is the free wall alone, for the fibre
+        step. `cemrg-heartbuilder` keeps the same pair.
 
         Args:
             paths: The data contract with all required ventricular surface paths.
@@ -432,15 +434,22 @@ class SurfaceLogic:
         try:
             self.logger.info("Removing septum from RV endocardium.")
 
+            # The extension is spelled out because the two leaf helpers
+            # disagree about them: `read_surf` puts its argument through
+            # `with_suffix(".surf")` while `write_surf` takes it literally. A
+            # stem here would write an extensionless file that no reader ever
+            # opens -- which is what happened while this call overwrote its own
+            # input, and why the septum removal had no effect for so long.
+            free_wall_surface = CarpSurface(paths.rv_endo_nosept_surface).surf
+
             # Step 1: Create the new free wall surface by removing septal triangles.
-            # The output_path overwrites the original rv_endo_surface.
             mshu.remove_septum_from_endo(
                 endo_surface_path=paths.rv_endo_surface,
                 septum_surface_path=paths.septum_surface,
-                output_path=paths.rv_endo_surface,
+                output_path=free_wall_surface,
             )
             self.logger.info(
-                f"Generated new free wall surface: {paths.rv_endo_surface.name}"
+                f"Generated new free wall surface: {free_wall_surface.name}"
             )
 
             # There was a VTX write here. It read the surface back and wrote
@@ -451,10 +460,14 @@ class SurfaceLogic:
             #
             # Step 2: Generate a .vtk file for visualization/debugging.
             # This is not a final artifact, so it goes in the temporary directory.
-            debug_vtk_path = paths.tmp_dir / CarpMesh(paths.rv_endo_surface).vtk.name
+            # It shows the free wall, which is what this method produces; it
+            # used to name `rv_endo_surface` because the two were one file.
+            debug_vtk_path = (
+                paths.tmp_dir / CarpMesh(paths.rv_endo_nosept_surface).vtk.name
+            )
             mshu.surf2vtk(
                 mesh_base_path=paths.mesh.stem,
-                surface_path=paths.rv_endo_surface,
+                surface_path=free_wall_surface,
                 output_vtk_path=debug_vtk_path,
             )
             self.logger.info(f"Generated debug VTK file: {debug_vtk_path.name}")
@@ -488,6 +501,7 @@ class SurfaceLogic:
             (paths.epi_surface, "epi"),
             (paths.lv_endo_surface, "lvendo"),
             (paths.rv_endo_surface, "rvendo"),
+            (paths.rv_endo_nosept_surface, "rvendo_nosept"),
             (paths.septum_surface, "rvsept"),
             (paths.base_surface, "base"),
         ]

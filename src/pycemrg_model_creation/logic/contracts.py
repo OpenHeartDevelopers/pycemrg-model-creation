@@ -96,11 +96,18 @@ class VentricularSurfacePaths:
     # write loop, the map list and the rename — which is the Rule of Three.
     # `contracts` may not import `tools`, so these are plain strings here and a
     # test pins them equal to `tools.mguvc.UvcBoundary`.
+    # The order is `cemrg-heartbuilder`'s `ext_list`. `rvendo_nosept` is the RV
+    # free wall, which mguvc derives for itself and never reads -- it is here
+    # because we produce it and it must be mapped with the rest. So this list is
+    # "boundaries we write and remap", not "boundaries mguvc opens"; `epi` is
+    # here for the same reason. `tools.mguvc.UvcBoundary` is the shorter list of
+    # what mguvc actually reads, and a test pins this one as a superset of it.
     BOUNDARY_ROLES: ClassVar[Tuple[str, ...]] = (
         "base",
         "epi",
         "lvendo",
         "rvendo",
+        "rvendo_nosept",
         "rvsept",
     )
 
@@ -142,8 +149,19 @@ class VentricularSurfacePaths:
 
     @property
     def rv_endo_vtx(self) -> Path:
-        """RV endocardium. An mguvc input."""
+        """RV endocardium, septal surface included. An mguvc input."""
         return self.submesh.role("rvendo", ".vtx")
+
+    @property
+    def rv_endo_nosept_vtx(self) -> Path:
+        """
+        RV free wall -- the endocardium with the septal triangles removed.
+
+        **Not** an mguvc input; it derives its own. This is the fibre step's
+        boundary, and it is mapped alongside the rest so it carries submesh
+        indices when that step lands.
+        """
+        return self.submesh.role("rvendo_nosept", ".vtx")
 
     @property
     def rvsept_vtx(self) -> Path:
@@ -251,8 +269,25 @@ class VentricularSurfacePaths:
 
     @property
     def rv_endo_surface(self) -> Path:
-        """RV endocardium."""
+        """
+        RV endocardium, septal surface included.
+
+        The septum removal does **not** overwrite this file; it writes
+        `rv_endo_nosept_surface` instead. mguvc needs the complete surface.
+        """
         return self.output_dir / "biv_rvendo"
+
+    @property
+    def rv_endo_nosept_surface(self) -> Path:
+        """
+        RV free wall, the output of the septum removal.
+
+        Underscore-joined like its four siblings, and deliberately not
+        `submesh.role("rvendo_nosept")`: `mesh.read_surf` puts the stem through
+        `with_suffix`, which would truncate a dot-joined `BiV.rvendo_nosept`
+        to `BiV.surf`.
+        """
+        return self.output_dir / "biv_rvendo_nosept"
 
     @property
     def septum_surface(self) -> Path:

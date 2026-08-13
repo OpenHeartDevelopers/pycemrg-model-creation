@@ -141,9 +141,29 @@ class TestTheTwoGenerations:
         predicted = {p.name for p in boundary_inputs(CarpMesh(BIV / "BiV")).values()}
         derived = {target.name for _, target in make_paths().boundary_vtx_pairs()}
 
-        # mguvc reads four; we also carry `epi`, which it derives itself.
+        # mguvc reads four. We carry two more, `epi` and `rvendo_nosept`, which
+        # it derives for itself -- we map them because later stages want them
+        # in submesh indices. Anything else appearing here is a mistake.
         assert predicted < derived
-        assert derived - predicted == {"BiV.epi.vtx"}
+        assert derived - predicted == {"BiV.epi.vtx", "BiV.rvendo_nosept.vtx"}
+
+    def test_the_free_wall_is_not_the_endocardium(self):
+        # These were one file until the septum removal was given its own
+        # output. If they ever collide again, `rvendo` becomes the free wall
+        # and mguvc silently loses the septal surface.
+        paths = make_paths()
+
+        assert paths.rv_endo_surface != paths.rv_endo_nosept_surface
+        assert paths.rv_endo_vtx != paths.rv_endo_nosept_vtx
+
+    def test_the_free_wall_surface_survives_read_surf(self):
+        # `mesh.read_surf` puts its argument through `with_suffix(".surf")`,
+        # which replaces the last dot-segment rather than appending. A
+        # dot-joined name would be truncated to `BiV.surf` and this test is
+        # what stops someone reaching for `submesh.role("rvendo_nosept")`.
+        surface = make_paths().rv_endo_nosept_surface
+
+        assert surface.with_suffix(".surf").name == "biv_rvendo_nosept.surf"
 
 
 class TestContractDiscipline:
