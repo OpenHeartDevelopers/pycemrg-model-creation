@@ -131,16 +131,17 @@ def read_surf(surface_path: Path) -> np.ndarray:
     Reads a CARP .surf file, returning only the triangle connectivity.
 
     Args:
-        surface_path: Path to the .surf file.
+        surface_path: Path to the .surf file, extension included. The path is
+            taken literally -- no extension is added or replaced. `write_surf`
+            reads its argument the same way, so the two agree and a caller can
+            hand the same path to both.
 
     Returns:
         A NumPy array of shape (n_triangles, 3) with vertex indices.
     """
     logger.info(f"Reading surface connectivity from {surface_path.name}")
     # The .surf file format is "Tr vtx1 vtx2 vtx3". We skip the "Tr" column.
-    return np.loadtxt(
-        surface_path.with_suffix(".surf"), dtype=int, skiprows=1, usecols=[1, 2, 3]
-    )
+    return np.loadtxt(surface_path, dtype=int, skiprows=1, usecols=[1, 2, 3])
 
 
 # WRITING FUNCTIONS
@@ -154,7 +155,8 @@ def write_surf(
 
     Args:
         surface_cells: A NumPy array of shape (n_triangles, 3) with vertex indices.
-        output_path: Path to the output .surf file.
+        output_path: Path to the output .surf file, extension included. Taken
+            literally, matching `read_surf`.
     """
     assert surface_cells.ndim == 2 and surface_cells.shape[1] == 3, (
         "Input array must be of shape (n, 3)."
@@ -224,6 +226,10 @@ def connected_component_to_surface(
 ) -> None:
     eidx = np.fromfile(eidx_path.with_suffix(".eidx"), dtype=int, count=-1)
     nod = np.fromfile(eidx_path.with_suffix(".nod"), dtype=int, count=-1)
+    # The two path arguments are not the same shape, which is easy to get
+    # wrong: `input_surface_path` arrives with `.surf` already on it, while
+    # `eidx_path` and `output_surface_path` are stems that this function
+    # extends. So the read is literal and needs no conversion.
     surf = read_surf(input_surface_path)
     vtx = surf2vtx(surf)
 

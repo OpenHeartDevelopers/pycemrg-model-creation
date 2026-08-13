@@ -9,18 +9,21 @@ import pytest
 
 from pycemrg_model_creation.utilities.mesh import (
     ElemType,
+    connected_component_to_surface,
     extract_points_by_vtx,
     read_dat,
     read_elem,
     read_lon,
     read_neubc,
     read_nod_eidx,
+    read_surf,
     read_vtx,
     reindex_surf,
     reindex_vtx,
     write_dat,
     write_elem,
     write_lon,
+    write_surf,
     write_vtx,
 )
 
@@ -48,6 +51,119 @@ class TestVtxRoundTrip:
         result = read_vtx(path)
         assert result.ndim == 1
         assert result[0] == 7
+
+
+class TestSurfRoundTrip:
+    """
+    These were missing, which is how the reader and writer came to disagree.
+
+    `read_surf` used to run `with_suffix(".surf")` on its argument while
+    `write_surf` took its path literally, so a caller handing a stem to both
+    read one file and wrote another. Nothing caught it because neither helper
+    had a test.
+    """
+
+    def test_round_trip(self, tmp_path):
+        surf = np.array([[0, 1, 2], [2, 3, 4]])
+        path = tmp_path / "endo.surf"
+
+        write_surf(surf, path)
+        np.testing.assert_array_equal(read_surf(path), surf)
+
+    def test_header_is_the_triangle_count(self, tmp_path):
+        path = tmp_path / "endo.surf"
+        write_surf(np.array([[0, 1, 2], [2, 3, 4]]), path)
+
+        assert path.read_text().splitlines()[0] == "2"
+
+    def test_row_prefix_is_tr(self, tmp_path):
+        path = tmp_path / "endo.surf"
+        write_surf(np.array([[7, 8, 9]]), path)
+
+        assert path.read_text().splitlines()[1] == "Tr 7 8 9"
+
+    def test_both_sides_take_the_path_literally(self, tmp_path):
+        # The pairing that C establishes: whatever name the writer is given is
+        # the name the reader opens. A stem must fail on both sides, not
+        # silently work on one.
+        # Two triangles, because `read_surf` returns 1-D for a single row.
+        surf = np.array([[0, 1, 2], [2, 3, 4]])
+        stem = tmp_path / "endo"
+
+        write_surf(surf, stem)
+
+        assert stem.exists()
+        assert not stem.with_suffix(".surf").exists()
+        np.testing.assert_array_equal(read_surf(stem), surf)
+
+    def test_a_dotted_stem_is_not_truncated(self, tmp_path):
+        # The name must have no `.surf` on it, or this proves nothing:
+        # `with_suffix(".surf")` is a no-op on a path that already ends in it.
+        # A dotted stem is where the old reader broke -- it turned
+        # `BiV.rvendo_nosept` into `BiV.surf` and read the wrong file.
+        surf = np.array([[4, 5, 6], [6, 7, 8]])
+        dotted_stem = tmp_path / "BiV.rvendo_nosept"
+
+        write_surf(surf, dotted_stem)
+        np.testing.assert_array_equal(read_surf(dotted_stem), surf)
+        assert not (tmp_path / "BiV.surf").exists()
+
+    def test_rejects_wrong_column_count(self, tmp_path):
+        with pytest.raises(AssertionError):
+            write_surf(np.array([[0, 1, 2, 3]]), tmp_path / "bad.surf")
+
+
+class TestConnectedComponentToSurface:
+    """
+    Its three path arguments are not the same shape, and nothing covered it.
+
+    `input_surface_path` arrives with `.surf` already on it; `eidx_path` and
+    `output_surface_path` are stems the function extends itself. Wrapping the
+    input in a `CarpSurface` looks right and raises, because the handle refuses
+    an extension -- a real break that the unit suite let through once.
+    """
+
+    def _write_component(self, tmp_path, eidx, nod):
+        stem = tmp_path / "component"
+        np.array(eidx, dtype=int).tofile(stem.with_suffix(".eidx"))
+        np.array(nod, dtype=int).tofile(stem.with_suffix(".nod"))
+        return stem
+
+    def test_carves_the_named_triangles_out(self, tmp_path):
+        surf = np.array([[0, 1, 2], [2, 3, 4], [4, 5, 6]])
+        source = tmp_path / "epi_endo.surf"
+        write_surf(surf, source)
+
+        stem = self._write_component(tmp_path, eidx=[0, 2], nod=[0, 1])
+        out = tmp_path / "biv_epi"
+
+        connected_component_to_surface(
+            eidx_path=stem, input_surface_path=source, output_surface_path=out
+        )
+
+        np.testing.assert_array_equal(
+            read_surf(out.with_suffix(".surf")), surf[[0, 2], :]
+        )
+
+    def test_the_input_surface_is_taken_literally(self, tmp_path):
+        # The regression: the input already carries `.surf`, so the function
+        # must not convert it. Naming a file whose stem alone does not exist
+        # is what makes this fail if anything re-derives the path.
+        surf = np.array([[0, 1, 2], [2, 3, 4]])
+        source = tmp_path / "epi_endo.surf"
+        write_surf(surf, source)
+        assert not (tmp_path / "epi_endo").exists()
+
+        stem = self._write_component(tmp_path, eidx=[1], nod=[0])
+
+        connected_component_to_surface(
+            eidx_path=stem,
+            input_surface_path=source,
+            output_surface_path=tmp_path / "out",
+        )
+
+        assert (tmp_path / "out.surf").exists()
+        assert (tmp_path / "out.vtx").exists()
 
 
 class TestDatRoundTrip:

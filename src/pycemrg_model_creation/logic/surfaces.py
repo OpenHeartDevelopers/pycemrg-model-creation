@@ -406,7 +406,7 @@ class SurfaceLogic:
 
             mshu.surf2vtk(
                 mesh_base_path=paths.mesh.stem,
-                surface_path=paths.epi_surface,
+                surface_path=CarpSurface(paths.epi_surface).surf,
                 output_vtk_path=CarpMesh(paths.epi_surface).vtk,
             )
             self.logger.info("Surface mapping completed")
@@ -434,18 +434,15 @@ class SurfaceLogic:
         try:
             self.logger.info("Removing septum from RV endocardium.")
 
-            # The extension is spelled out because the two leaf helpers
-            # disagree about them: `read_surf` puts its argument through
-            # `with_suffix(".surf")` while `write_surf` takes it literally. A
-            # stem here would write an extensionless file that no reader ever
-            # opens -- which is what happened while this call overwrote its own
-            # input, and why the septum removal had no effect for so long.
+            # The leaf readers and writers take literal paths, so the extension
+            # is named here. The contract holds stems; `CarpSurface` is what
+            # turns one into the file a reader will actually open.
             free_wall_surface = CarpSurface(paths.rv_endo_nosept_surface).surf
 
             # Step 1: Create the new free wall surface by removing septal triangles.
             mshu.remove_septum_from_endo(
-                endo_surface_path=paths.rv_endo_surface,
-                septum_surface_path=paths.septum_surface,
+                endo_surface_path=CarpSurface(paths.rv_endo_surface).surf,
+                septum_surface_path=CarpSurface(paths.septum_surface).surf,
                 output_path=free_wall_surface,
             )
             self.logger.info(
