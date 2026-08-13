@@ -687,10 +687,16 @@ class MeshtoolWrapper:
     def map(
         self,
         submesh_path: Path,
-        files_list: List[str],
+        files_list: Sequence[Union[str, Path]],
         output_folder: Path,
         mode: str = "m2s",
     ) -> None:
+        # This method could not work with either argument type before: the
+        # debug line did `f.name`, which needs `Path`, while the join below
+        # needed `str`. Whichever the caller passed, one of the two raised —
+        # and only when debug logging was on, which is how it survived.
+        files_list = [Path(f) for f in files_list]
+
         msg = f"Mapping {len(files_list)} onto {submesh_path.name}"
         self.logger.info(msg)
         self.logger.debug(f"Mapping files {[f.name for f in files_list]}")
@@ -700,7 +706,7 @@ class MeshtoolWrapper:
             self.logger.error(msg)
             raise ValueError(msg)
 
-        files_str = ",".join(files_list)
+        files_str = ",".join(str(f) for f in files_list)
         cmd: List[Union[str, Path]] = [
             "meshtool",
             "map",

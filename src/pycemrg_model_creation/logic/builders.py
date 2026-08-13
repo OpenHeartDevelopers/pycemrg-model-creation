@@ -209,14 +209,16 @@ class ModelCreationPathBuilder:
             # this flow writes, and to omit `rvsept`, which mguvc requires. So
             # it asked meshtool to map a file that did not exist and skipped one
             # that did.
+            #
+            # It also named the *submesh* generation, which is the output of the
+            # mapping rather than its input. It now names the four-chamber
+            # generation in tmp/, and carries the rename targets alongside.
             vtx_files_to_map=[
-                ventricular_paths.base_vtx,
-                ventricular_paths.epi_vtx,
-                ventricular_paths.lv_endo_vtx,
-                ventricular_paths.rv_endo_vtx,
-                ventricular_paths.rvsept_vtx,
+                source for source, _ in ventricular_paths.boundary_vtx_pairs()
             ],
-            mapped_vtx_output_dir=self.biv_dir / "biv",
+            renamed_vtx_targets=[
+                target for _, target in ventricular_paths.boundary_vtx_pairs()
+            ],
         )
 
     def build_atrial_mesh_paths(

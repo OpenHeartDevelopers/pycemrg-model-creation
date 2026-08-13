@@ -443,16 +443,13 @@ class SurfaceLogic:
                 f"Generated new free wall surface: {paths.rv_endo_surface.name}"
             )
 
-            # Step 2: Generate the corresponding .vtx file for the new surface.
-            # Read the surface we just created to get its vertex list.
-            freewall_surf = mshu.read_surf(paths.rv_endo_surface)
-            freewall_vtx = mshu.surf2vtx(freewall_surf)
-            mshu.write_vtx(freewall_vtx, paths.rv_endo_vtx)
-            self.logger.info(
-                f"Generated corresponding vtx file: {paths.rv_endo_vtx.name}"
-            )
-
-            # Step 3: Generate a .vtk file for visualization/debugging.
+            # There was a VTX write here. It read the surface back and wrote
+            # `rv_endo_vtx`, which `prepare_ventricular_vtx_files` then wrote
+            # again from the same surface one step later. Two writers, one
+            # file, same content. The later one is where every boundary is
+            # written, so this one is gone.
+            #
+            # Step 2: Generate a .vtk file for visualization/debugging.
             # This is not a final artifact, so it goes in the temporary directory.
             debug_vtk_path = paths.tmp_dir / CarpMesh(paths.rv_endo_surface).vtk.name
             mshu.surf2vtk(
@@ -483,19 +480,21 @@ class SurfaceLogic:
         """
         self.logger.info("Preparing VTX files from surfaces for UVC.")
 
-        # A list of (source_surface, destination_vtx) pairs.
-        # This is explicit and easy to modify.
-        surface_to_vtx_map = [
-            (paths.epi_surface, paths.epi_vtx),
-            (paths.lv_endo_surface, paths.lv_endo_vtx),
-            (paths.rv_endo_surface, paths.rv_endo_vtx),
-            (paths.septum_surface, paths.rvsept_vtx),
-            # The 'base' surface is also required per the old contract.
-            (paths.base_surface, paths.base_vtx),
+        # (source_surface, mguvc role). The surfaces carry four-chamber node
+        # indices, so the VTX files derived from them do too, and they are
+        # written to the four-chamber generation in tmp/ — not beside the
+        # submesh, where a reader would take them for remapped ones.
+        surface_to_role = [
+            (paths.epi_surface, "epi"),
+            (paths.lv_endo_surface, "lvendo"),
+            (paths.rv_endo_surface, "rvendo"),
+            (paths.septum_surface, "rvsept"),
+            (paths.base_surface, "base"),
         ]
 
         try:
-            for surf_path, vtx_path in surface_to_vtx_map:
+            for surf_path, role in surface_to_role:
+                vtx_path = paths.source_boundaries.role(role, ".vtx")
                 surf_file_with_ext = CarpSurface(surf_path).surf
 
                 if not surf_file_with_ext.is_file():
@@ -691,14 +690,14 @@ class SurfaceLogic:
         try:
             self.logger.info("Mapping VTX files to BiV submesh")
 
-            files_str = [str(f) for f in paths.vtx_files_to_map]
-
             self.meshtool.map(
                 submesh_path=paths.output_mesh.stem,
-                files_list=files_str,
+                files_list=paths.vtx_files_to_map,
                 output_folder=paths.mapped_vtx_output_dir,
                 mode="m2s",
             )
+
+            self._rename_mapped_boundaries(paths)
 
             self.logger.info("VTX mapping to BiV completed")
 
@@ -706,6 +705,32 @@ class SurfaceLogic:
             msg = f"Failed to map VTX to BiV: {e}"
             self.logger.error(msg)
             raise SurfaceExtractionError(msg) from e
+
+    def _rename_mapped_boundaries(self, paths: BiVMeshPaths) -> None:
+        """
+        Give the mapped boundaries the submesh stem.
+
+        `meshtool map` keeps each input's basename, so the remapped files
+        arrive in the output directory still carrying the four-chamber stem —
+        `BiV/heart.base.vtx`. `mguvc` builds its filenames from the model name
+        it is given, so it looks for `BiV/BiV.base.vtx` and would find nothing.
+        This is the hop that was missing: the chain wrote the right names in
+        the wrong generation and then never renamed the right generation.
+
+        Args:
+            paths: BiV mesh paths contract. `vtx_files_to_map` and
+                   `renamed_vtx_targets` are in the same order by construction.
+        """
+        for source, target in zip(paths.vtx_files_to_map, paths.renamed_vtx_targets):
+            mapped = paths.mapped_vtx_output_dir / source.name
+            if not mapped.is_file():
+                raise SurfaceExtractionError(
+                    f"meshtool map did not produce {mapped}. Expected it beside "
+                    f"the submesh, because -outdir names a directory and the "
+                    f"input basename is kept."
+                )
+            mapped.replace(target)
+            self.logger.debug(f"Renamed {mapped.name} -> {target.name}")
 
     def extract_atrial_submesh(
         self, paths: AtrialMeshPaths, tags: TagsConfig, chamber: Chamber

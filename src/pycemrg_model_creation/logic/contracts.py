@@ -2,7 +2,7 @@
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import List
+from typing import ClassVar, List, Tuple
 
 from ..meshpaths import CarpMesh
 
@@ -92,6 +92,18 @@ class VentricularSurfacePaths:
     # storing five spellings that can drift from it.
     submesh: CarpMesh
 
+    # mguvc's role vocabulary, in one place. Three things need this list — the
+    # write loop, the map list and the rename — which is the Rule of Three.
+    # `contracts` may not import `tools`, so these are plain strings here and a
+    # test pins them equal to `tools.mguvc.UvcBoundary`.
+    BOUNDARY_ROLES: ClassVar[Tuple[str, ...]] = (
+        "base",
+        "epi",
+        "lvendo",
+        "rvendo",
+        "rvsept",
+    )
+
     # -- Boundary VTX files (beside the submesh) -------------------------
     #
     # The role strings are mguvc's own vocabulary, and there is no translation
@@ -99,8 +111,14 @@ class VentricularSurfacePaths:
     # way here because that is what mguvc opens; do not reintroduce `septum`.
     #
     # mguvc reads four of these: `base`, `lvendo`, `rvendo` and `rvsept`. It
-    # derives `epi` itself and never opens `epi_vtx`. That file exists for the
-    # later fibre step, which is not ported yet, so it is not unused.
+    # derives `epi` itself.
+    #
+    # `epi_vtx` has **no established consumer**. An earlier comment here said
+    # the fibre step read it; that was wrong. `GlRuleFibres` takes four Laplace
+    # `.dat` solutions, and its `-e` argument is `BiV.sol_endoepi_lap.dat`, not
+    # a surface. In `cemrg-heartbuilder` no Python opens `epi` after the rename
+    # either. It is kept deliberately, because it costs one line and the later
+    # modelling stages are not ported — not because a caller is known.
     #
     # `apex_vtx` is absent on purpose: for BiV, mguvc *writes* `BiV.lvapex.vtx`.
     # `rv_septum_point_vtx` is absent too. mguvc asks for `rvsept_pt` only under
@@ -114,7 +132,7 @@ class VentricularSurfacePaths:
 
     @property
     def epi_vtx(self) -> Path:
-        """Epicardium. **Not** an mguvc input; read by the fibre step."""
+        """Epicardium. **Not** an mguvc input, and no known consumer."""
         return self.submesh.role("epi", ".vtx")
 
     @property
@@ -138,6 +156,46 @@ class VentricularSurfacePaths:
     def tmp_dir(self) -> Path:
         """Scratch directory for intermediate surfaces."""
         return self.output_dir / "tmp"
+
+    # -- The four-chamber generation -------------------------------------
+
+    @property
+    def source_boundaries(self) -> CarpMesh:
+        """
+        Names the boundary VTX files *before* they are remapped.
+
+        A boundary extracted from the four-chamber mesh carries four-chamber
+        node indices, which mean nothing against the BiV submesh. So every
+        boundary exists twice, and the two must not be confusable.
+
+        They are told apart by **stem**, as `cemrg-heartbuilder` does it: the
+        four-chamber generation keeps the source mesh's own name and lives in
+        `tmp/`; `meshtool map` copies it into the output directory keeping the
+        basename; the rename then gives it the submesh stem. So
+        `tmp/heart.base.vtx` becomes `BiV/heart.base.vtx` becomes
+        `BiV/BiV.base.vtx`.
+
+        Telling them apart by directory alone was considered and rejected: it
+        would put a four-chamber-indexed file under the name `BiV.base.vtx`,
+        which is a trap for anything that later copies it.
+        """
+        return CarpMesh(self.tmp_dir / self.mesh.name)
+
+    def boundary_vtx_pairs(self) -> List[Tuple[Path, Path]]:
+        """
+        `(four-chamber, submesh)` for each boundary, in `BOUNDARY_ROLES` order.
+
+        The mapping step reads the first of each pair; the rename step turns
+        the first into the second. Both sides come from one role list, so a
+        boundary cannot be mapped under one name and renamed under another.
+        """
+        return [
+            (
+                self.source_boundaries.role(role, ".vtx"),
+                self.submesh.role(role, ".vtx"),
+            )
+            for role in self.BOUNDARY_ROLES
+        ]
 
     # -- Intermediate surfaces (in tmp_dir) ------------------------------
 
@@ -253,9 +311,27 @@ class BiVMeshPaths:
 
     output_dir: Path
 
-    # VTX files to map from four-chamber to BiV
+    # The four-chamber-indexed boundary files, in tmp/. `meshtool map` reads
+    # these; it never reads the submesh-indexed generation.
     vtx_files_to_map: List[Path]
-    mapped_vtx_output_dir: Path
+
+    # Where the boundaries should end up, as `<submesh stem>.<role>.vtx`.
+    # Paired with `vtx_files_to_map` only through
+    # `VentricularSurfacePaths.boundary_vtx_pairs`, so the two lists are in the
+    # same order by construction.
+    renamed_vtx_targets: List[Path]
+
+    @property
+    def mapped_vtx_output_dir(self) -> Path:
+        """
+        Where `meshtool map` puts its results.
+
+        `-outdir` names a **directory**, and meshtool keeps each input's
+        basename inside it. It is not a stem prefix. This was previously
+        `<output_dir>/biv`, which quietly created a subdirectory and left every
+        mapped boundary one level below the mesh that needs it.
+        """
+        return self.output_dir
 
 
 @dataclass

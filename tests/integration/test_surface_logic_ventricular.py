@@ -64,23 +64,30 @@ def test_run_ventricular_extraction_on_sample_01(tmp_path, test_data_root):
     # --- 5. Validation: Assert that key output files were created ---
     # This is the most important part of the test.
     logging.info("Validating key functional output files...")
-    # These are the files required by the downstream UVC process.
-    # We check for the .surf files (geometry) and .vtx files (boundary conditions).
+    #
+    # These are this stage's outputs, not the files mguvc eventually opens.
+    # Every boundary exists twice: once in four-chamber node indices, once in
+    # BiV ones. This stage produces only the first generation, in tmp/ under
+    # the source mesh's own stem. `meshtool map` and the rename that turn
+    # `tmp/heart.base.vtx` into `BiV/BiV.base.vtx` live in
+    # `run_biv_mesh_extraction`, which this test never calls -- so asserting
+    # `ventricular_paths.base_vtx` here would be asserting another stage's work.
     files_to_check = [
-        # Final surface geometry files
+        # Surface geometry, beside the submesh under underscore names.
         ventricular_paths.epi_surface.with_suffix(".surf"),
         ventricular_paths.lv_endo_surface.with_suffix(".surf"),
-        ventricular_paths.rv_endo_surface.with_suffix(
-            ".surf"
-        ),  # This is now the free wall
+        # The full RV endocardium, septal surface included. The septum removal
+        # writes its result elsewhere and does not overwrite this file.
+        ventricular_paths.rv_endo_surface.with_suffix(".surf"),
         ventricular_paths.septum_surface.with_suffix(".surf"),
-        # Final VTX boundary condition files
-        ventricular_paths.base_vtx,
-        ventricular_paths.epi_vtx,
-        ventricular_paths.lv_endo_vtx,
-        ventricular_paths.rv_endo_vtx,
-        ventricular_paths.rvsept_vtx,
-        # ventricular_paths.apex_vtx,  # This is copied from a template. Not needed anymore
+    ]
+
+    # The four-chamber generation of the boundary VTX files. Taking the roles
+    # from the contract keeps this test from spelling mguvc's vocabulary a
+    # third time and drifting from it.
+    files_to_check += [
+        ventricular_paths.source_boundaries.role(role, ".vtx")
+        for role in ventricular_paths.BOUNDARY_ROLES
     ]
 
     for file_path in files_to_check:

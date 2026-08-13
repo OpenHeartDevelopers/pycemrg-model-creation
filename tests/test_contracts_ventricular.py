@@ -106,6 +106,46 @@ class TestNamesAreDerivedNotCoincidental:
         assert paths.tmp_dir.name == "tmp"
 
 
+class TestTheTwoGenerations:
+    """
+    Every boundary exists twice: four-chamber indices, and submesh indices.
+    They are told apart by stem, and the stems must not collide.
+    """
+
+    def test_the_four_chamber_generation_lives_in_tmp(self):
+        paths = make_paths()
+        assert paths.source_boundaries.stem == TMP / "heart"
+        assert paths.source_boundaries.role("base", ".vtx") == TMP / "heart.base.vtx"
+
+    def test_the_two_generations_never_share_a_path(self):
+        # If these ever collide, mapping a boundary would overwrite its own
+        # input and the four-chamber indices would survive into the UVC stage
+        # looking correct.
+        for source, target in make_paths().boundary_vtx_pairs():
+            assert source != target
+            assert source.parent != target.parent
+
+    def test_the_pairs_cover_every_role_in_order(self):
+        paths = make_paths()
+        roles = [role for role in paths.BOUNDARY_ROLES]
+        pairs = paths.boundary_vtx_pairs()
+
+        assert len(pairs) == len(roles)
+        for (source, target), role in zip(pairs, roles):
+            assert source.name == f"heart.{role}.vtx"
+            assert target.name == f"BiV.{role}.vtx"
+
+    def test_the_roles_are_the_ones_mguvc_names(self):
+        # `contracts` may not import `tools`, so the vocabulary is spelled in
+        # two places. This is the only thing holding them together.
+        predicted = {p.name for p in boundary_inputs(CarpMesh(BIV / "BiV")).values()}
+        derived = {target.name for _, target in make_paths().boundary_vtx_pairs()}
+
+        # mguvc reads four; we also carry `epi`, which it derives itself.
+        assert predicted < derived
+        assert derived - predicted == {"BiV.epi.vtx"}
+
+
 class TestContractDiscipline:
     def test_is_frozen(self):
         # A derived name that could be reassigned defeats the point.
@@ -131,6 +171,7 @@ class TestContractDiscipline:
             "lv_endo_vtx",
             "rv_endo_vtx",
             "rvsept_vtx",
+            "source_boundaries",  # the four-chamber generation, in tmp/
         ],
     )
     def test_a_derived_name_is_not_a_constructor_argument(self, removed_name):
