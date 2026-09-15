@@ -13,6 +13,7 @@ from pycemrg_model_creation.logic.contracts import (
     AtrialMeshPaths,
     UVCSurfaceExtractionPaths,
     VentricularUVCPaths,
+    VentricularFibrePaths,
 )
 
 logger = logging.getLogger(__name__)
@@ -297,6 +298,41 @@ class ModelCreationPathBuilder:
             biv_mesh=mesh,
             output_dir=mesh.directory / output_subdir,
             etags_file=mesh.role("etags", ".sh"),
+        )
+
+    def build_ventricular_fibre_paths(
+        self, uvc_paths: VentricularUVCPaths
+    ) -> VentricularFibrePaths:
+        """
+        Build the path contract for ventricular fibre generation.
+
+        Takes the already-built UVC contract rather than a raw mesh and
+        directory, so the two contracts cannot disagree about which mesh or
+        which output directory holds the Laplace solutions GlRuleFibres
+        needs — the same mesh and the same directory `UvcLogic` just wrote
+        to.
+
+        Laplace inputs and the fibre output are not stored. Ask for them:
+        `tools.mguvc.outputs_for(paths.biv_mesh, paths.uvc_output_dir)` and
+        `paths.biv_mesh.lon`.
+
+        Args:
+            uvc_paths: The VentricularUVCPaths contract for the UVC run that
+                       produced this mesh's Laplace solutions.
+
+        Returns:
+            A VentricularFibrePaths contract.
+
+        Note:
+            Pure construction — no directory is created, moved or removed.
+
+        Example:
+            >>> uvc_paths = builder.build_ventricular_uvc_paths(biv_mesh=...)
+            >>> fibre_paths = builder.build_ventricular_fibre_paths(uvc_paths)
+        """
+        return VentricularFibrePaths(
+            biv_mesh=uvc_paths.biv_mesh,
+            uvc_output_dir=uvc_paths.output_dir,
         )
 
     def build_all(

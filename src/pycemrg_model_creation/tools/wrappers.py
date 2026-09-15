@@ -31,7 +31,7 @@ class CarpWrapper:
     """
     A high-level SDK for common CARPentry command-line tools.
 
-    This class provides Pythonic wrappers around tools like GlRuleFibres,
+    This class provides Pythonic wrappers around tools like GlRuleFibers,
     GlVTKConvert, and igbextract, abstracting away the command-line details.
     """
 
@@ -58,7 +58,7 @@ class CarpWrapper:
         fibre_type: str = "biv",
     ) -> None:
         """
-        Wrapper for the GlRuleFibres command.
+        Wrapper for the GlRuleFibers command (note the American spelling).
 
         Args:
             mesh_name: Path to the input mesh.
@@ -74,8 +74,11 @@ class CarpWrapper:
         angles_to_use = angles if angles is not None else DEFAULT_FIBRE_ANGLES
 
         self.logger.info(f"Generating rule-based fibres for {mesh_name.name}")
+        # The binary is spelled the American way, GlRuleFibers, while every
+        # name in this library uses "fibre". They differ on purpose; the
+        # reference pipeline cemrg-heartbuilder has the same split.
         cmd = [
-            "GlRuleFibres",
+            "GlRuleFibers",
             "-m",
             mesh_name,
             "-t",

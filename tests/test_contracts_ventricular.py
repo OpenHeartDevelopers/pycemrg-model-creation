@@ -16,7 +16,10 @@ from pathlib import Path
 import pytest
 
 from pycemrg_model_creation.logic.builders import ModelCreationPathBuilder
-from pycemrg_model_creation.logic.contracts import VentricularSurfacePaths
+from pycemrg_model_creation.logic.contracts import (
+    VentricularSurfacePaths,
+    VentricularFibrePaths,
+)
 from pycemrg_model_creation.meshpaths import CarpMesh
 from pycemrg_model_creation.tools.mguvc import UvcBoundary, boundary_inputs
 
@@ -334,3 +337,57 @@ class TestTheMeshIsAHandle:
 
         with pytest.raises(ValueError, match="without an extension"):
             builder.build_ventricular_paths(Path("/in/heart.pts"))
+
+
+class TestVentricularFibrePaths:
+    """
+    `VentricularFibrePaths` follows the same "ask, don't restate" discipline
+    as `VentricularUVCPaths`: two fields, everything else asked of
+    `tools.mguvc` and the mesh handle.
+    """
+
+    def test_is_frozen(self):
+        paths = VentricularFibrePaths(
+            biv_mesh=CarpMesh(BIV / "BiV"), uvc_output_dir=BIV / "uvc"
+        )
+        with pytest.raises(Exception):
+            paths.uvc_output_dir = Path("/elsewhere")
+
+    def test_constructing_touches_no_disk(self, tmp_path):
+        paths = VentricularFibrePaths(
+            biv_mesh=CarpMesh(tmp_path / "BiV" / "BiV"),
+            uvc_output_dir=tmp_path / "BiV" / "uvc",
+        )
+        assert not paths.biv_mesh.directory.exists()
+        assert not paths.uvc_output_dir.exists()
+        assert list(tmp_path.iterdir()) == []
+
+    def test_the_lon_output_is_the_mesh_handles_own(self):
+        # Not a contract field: `.lon` is asked of the CarpMesh handle, the
+        # same family member GlRuleFibres overwrites in place.
+        mesh = CarpMesh(BIV / "BiV")
+        paths = VentricularFibrePaths(biv_mesh=mesh, uvc_output_dir=BIV / "uvc")
+        assert paths.biv_mesh.lon == mesh.lon == BIV / "BiV.lon"
+
+
+class TestFibreBuilderAndContractAgree:
+    """
+    The builder wires this contract from an already-built `VentricularUVCPaths`
+    rather than raw arguments, so the two contracts cannot disagree about
+    which mesh or which output directory holds the Laplace solutions.
+    """
+
+    def test_the_builder_reuses_the_uvc_meshes_and_directory(self, tmp_path):
+        builder = ModelCreationPathBuilder(tmp_path)
+        uvc_paths = builder.build_ventricular_uvc_paths(biv_mesh=builder.biv_mesh)
+        fibre_paths = builder.build_ventricular_fibre_paths(uvc_paths)
+
+        assert fibre_paths.biv_mesh is uvc_paths.biv_mesh
+        assert fibre_paths.uvc_output_dir == uvc_paths.output_dir
+
+    def test_building_the_contract_does_not_touch_disk(self, tmp_path):
+        builder = ModelCreationPathBuilder(tmp_path)
+        uvc_paths = builder.build_ventricular_uvc_paths(biv_mesh=builder.biv_mesh)
+        builder.build_ventricular_fibre_paths(uvc_paths)
+
+        assert not (tmp_path / "BiV" / "uvc").exists()
