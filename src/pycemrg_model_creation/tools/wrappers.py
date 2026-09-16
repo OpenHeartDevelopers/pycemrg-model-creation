@@ -163,7 +163,11 @@ class CarpWrapper:
         self, meshname: Path, output: Path, fmt: str = "0", pstrat: str = "0"
     ) -> None:
         """
-        Wrapper for the GlElemCenters command.
+        Wrapper for the GlElemCenters command (note the American spelling).
+
+        Writes one ASCII CARP `.pts`: a count line, then one `x y z` centre
+        per element, in element order. `correct_fibres` reads it back to
+        measure distances between elements, so the ordering is load-bearing.
 
         Args:
             meshname: Path to the input mesh.
@@ -172,12 +176,17 @@ class CarpWrapper:
             pstrat: Partitioning strategy (default is '0').
         """
         self.logger.info(f"Calculating element centers for {meshname.name}")
+        # Each flag and its value are separate argv elements. They used to be
+        # glued into one token each -- "-f 0" rather than "-f", "0" -- which
+        # reaches the binary as a single unrecognised argument.
         cmd = [
             "GlElemCenters",
             "-m",
             meshname,
-            f"-f {fmt}",
-            f"-p {pstrat}",
+            "-f",
+            fmt,
+            "-p",
+            pstrat,
             "-o",
             output,
         ]

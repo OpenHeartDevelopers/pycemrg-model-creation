@@ -170,22 +170,21 @@ class SurfaceLogic:
                 )
 
             cc_parts = mshu.keep_largest_n_components(
-                component_names=cc_parts,
-                directory=paths.tmp_dir,
+                cc_parts,
                 keep_n=EXPECTED_CC_COUNT,
                 delete_smaller=True,
             )
 
             # Step 4: Identify which surface is which
             surfaces_data = []
-            for cc_name in cc_parts:
-                cc_path = paths.tmp_dir / cc_name
+            for component in cc_parts:
+                # Stems at the utility boundary: read_carp_mesh takes a Path.
                 pts, surf = mshu.read_carp_mesh(
-                    cc_path, elem_type=ElemType.Tr, read_tags=False
+                    component.stem, elem_type=ElemType.Tr, read_tags=False
                 )
                 cog = geom.compute_surface_center_of_gravity(pts)
                 surfaces_data.append(
-                    {"name": cc_name, "pts": pts, "surf": surf, "cog": cog}
+                    {"name": component.name, "pts": pts, "surf": surf, "cog": cog}
                 )
 
             # Step 5: Get LV blood pool center for distance calculations
@@ -226,9 +225,9 @@ class SurfaceLogic:
                         rv_endo_idx = endo_indices[0]
 
                     self.logger.info(
-                        f"Identified: EPI={cc_parts[epi_idx]}, "
-                        f"LV_ENDO={cc_parts[lv_endo_idx]}, "
-                        f"RV_ENDO={cc_parts[rv_endo_idx]}"
+                        f"Identified: EPI={cc_parts[epi_idx].name}, "
+                        f"LV_ENDO={cc_parts[lv_endo_idx].name}, "
+                        f"RV_ENDO={cc_parts[rv_endo_idx].name}"
                     )
                     break
 
@@ -239,17 +238,17 @@ class SurfaceLogic:
 
             # Step 7: Rename files to final output paths
             self._copy_mesh_family(
-                CarpMesh(paths.tmp_dir / cc_parts[epi_idx]),  # epicardium
+                cc_parts[epi_idx],  # epicardium
                 CarpMesh(paths.epi_surface),
                 with_vtk=True,
             )
             self._copy_mesh_family(
-                CarpMesh(paths.tmp_dir / cc_parts[lv_endo_idx]),  # lv_endocardium
+                cc_parts[lv_endo_idx],  # lv_endocardium
                 CarpMesh(paths.lv_endo_surface),
                 with_vtk=True,
             )
             self._copy_mesh_family(
-                CarpMesh(paths.tmp_dir / cc_parts[rv_endo_idx]),  # rv_endocardium
+                cc_parts[rv_endo_idx],  # rv_endocardium
                 CarpMesh(paths.rv_endo_surface),
                 with_vtk=True,
             )
@@ -311,17 +310,17 @@ class SurfaceLogic:
             )
 
             # Keep 2 largest (LV epi and septum)
-            cc_parts = mshu.keep_largest_n_components(cc_parts, paths.tmp_dir, keep_n=2)
+            cc_parts = mshu.keep_largest_n_components(cc_parts, keep_n=2)
 
             self.logger.info("Renaming septum connected components")
 
             # First is LV epi (intermediate), second is actual septum
             self._copy_mesh_family(
-                CarpMesh(paths.tmp_dir / cc_parts[0]),
+                cc_parts[0],
                 CarpMesh(paths.lv_epi_intermediate),
             )
             self._copy_mesh_family(
-                CarpMesh(paths.tmp_dir / cc_parts[1]),
+                cc_parts[1],
                 CarpMesh(paths.septum_surface),
             )
 

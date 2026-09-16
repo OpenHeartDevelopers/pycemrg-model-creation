@@ -6,10 +6,10 @@ import pyvista as pv
 
 from numpy.typing import NDArray
 from pathlib import Path
-from typing import List, Dict, Tuple
+from typing import Dict, Iterable, Tuple
 from enum import Enum
 
-from ..meshpaths import CarpMesh
+from ..meshpaths import CarpMesh, SubmeshParts
 from .geometry import outward_normal_fraction
 
 logger = logging.getLogger(__name__)
@@ -301,23 +301,28 @@ def surf2vtk(mesh_base_path: Path, surface_path: Path, output_vtk_path: Path) ->
 
 
 # SURFACE OPERATIONS
-def find_numbered_parts(directory: Path, base_prefix: str) -> List[str]:
+def find_numbered_parts(directory: Path, base_prefix: str) -> SubmeshParts:
     """
     Find all numbered part files matching a base prefix pattern.
 
     Searches for files with pattern: {base_prefix}.part{N}.elem
     where N starts at 0 and increments sequentially.
 
+    The arity is a property of the data rather than of the invocation, which
+    is why it has to be discovered rather than predicted.
+
     Args:
         directory: Directory to search for part files
         base_prefix: Base prefix to match (e.g., "epi_endo_CC")
 
     Returns:
-        List of base names without extensions (e.g., ["epi_endo_CC.part0", "epi_endo_CC.part1"])
+        The components found, as resolved handles. Returning handles rather
+        than bare names is what keeps a component's name and its directory
+        together; callers used to re-join the two themselves at every site.
 
     Example:
-        >>> find_numbered_parts(Path("/tmp"), "mesh_CC")
-        ["mesh_CC.part0", "mesh_CC.part1", "mesh_CC.part2"]
+        >>> find_numbered_parts(Path("/tmp"), "mesh_CC")[1].elem
+        PosixPath('/tmp/mesh_CC.part1.elem')
     """
     parts = []
     part_idx = 0
@@ -326,21 +331,20 @@ def find_numbered_parts(directory: Path, base_prefix: str) -> List[str]:
     elem_file = directory / f"{part_name}.elem"
 
     while elem_file.exists():
-        parts.append(part_name)
+        parts.append(CarpMesh(directory / part_name))
         part_idx += 1
 
         part_name = f"{base_prefix}.part{part_idx}"
         elem_file = directory / f"{part_name}.elem"
 
-    return parts
+    return SubmeshParts(tuple(parts))
 
 
 def keep_largest_n_components(
-    component_names: List[str],
-    directory: Path,
+    components: Iterable[CarpMesh],
     keep_n: int,
     delete_smaller: bool = True,
-) -> List[str]:
+) -> SubmeshParts:
     """
     Identifies the N largest mesh components and deletes the others.
 
@@ -348,56 +352,73 @@ def keep_largest_n_components(
     This function deletes all associated files (e.g., .elem, .pts) for the
     smaller, discarded components.
 
+    Takes no `directory` argument: each component carries its own, so the
+    two cannot be handed in disagreeing with each other.
+
+    Strict in what it returns, liberal in what it accepts. A `SubmeshParts`
+    from `find_numbered_parts` is the usual input, but any iterable of
+    handles will do -- a caller holding a plain list need not wrap it first.
+
+    This lives here rather than as a `SubmeshParts` method on purpose. It
+    reads every `.elem` to measure size and then deletes files; the handles
+    in `meshpaths` never touch the file system, and `meshpaths` cannot
+    import `read_elem` from this module without a cycle. The function sits
+    where the I/O sits.
+
     Args:
-        component_names: List of component base names (e.g., "mesh.part0").
-        directory: The directory containing the component files.
+        components: The components to choose among, as handles.
         keep_n: The number of largest components to keep.
         delete_smaller: If True, all files for smaller components are deleted.
 
     Returns:
-        A list of the base names of the components that were kept, sorted
-        by size from largest to smallest.
+        The components that were kept, sorted by size from largest to
+        smallest.
 
     Raises:
         ValueError: If `keep_n` is greater than the number of components found.
     """
-    if len(component_names) < keep_n:
+    # Materialise first: the argument may be any iterable, and this is
+    # counted before it is walked.
+    candidates = tuple(components)
+
+    if len(candidates) < keep_n:
         raise ValueError(
-            f"Cannot keep {keep_n} components: only {len(component_names)} found."
+            f"Cannot keep {keep_n} components: only {len(candidates)} found."
         )
 
     component_data = []
-    for name in component_names:
-        elem_path = directory / f"{name}.elem"
-        if not elem_path.is_file():
-            logger.warning(f"Component file not found, skipping: {elem_path}")
+    for component in candidates:
+        if not component.elem.is_file():
+            logger.warning(f"Component file not found, skipping: {component.elem}")
             continue
 
         # Correctly call read_elem using the ElemType enum
-        elements = read_elem(elem_path, elem_type=ElemType.Tr, read_tags=False)
-        component_data.append({"name": name, "size": elements.shape[0]})
+        elements = read_elem(component.elem, elem_type=ElemType.Tr, read_tags=False)
+        component_data.append({"mesh": component, "size": elements.shape[0]})
 
     # Sort components by size in descending order
     component_data.sort(key=lambda x: x["size"], reverse=True)
 
-    kept_components = [cd["name"] for cd in component_data[:keep_n]]
-    components_to_delete = [cd["name"] for cd in component_data[keep_n:]]
+    kept_components = [cd["mesh"] for cd in component_data[:keep_n]]
+    components_to_delete = [cd["mesh"] for cd in component_data[keep_n:]]
 
     logger.info(f"Keeping the {keep_n} largest of {len(component_data)} components:")
     for i, cd in enumerate(component_data[:keep_n]):
-        logger.info(f"  {i + 1}. {cd['name']} (size: {cd['size']} triangles)")
+        logger.info(f"  {i + 1}. {cd['mesh'].name} (size: {cd['size']} triangles)")
 
     if delete_smaller and components_to_delete:
         logger.info(f"Deleting {len(components_to_delete)} smaller components...")
-        for comp_name in components_to_delete:
-            for file_path in directory.glob(f"{comp_name}.*"):
+        for component in components_to_delete:
+            # Glob on the handle's own directory and basename: the family is
+            # every sibling of the stem, whatever extensions meshtool wrote.
+            for file_path in component.directory.glob(f"{component.name}.*"):
                 try:
                     file_path.unlink()
                     logger.debug(f"Deleted {file_path.name}")
                 except OSError as e:
                     logger.error(f"Error deleting file {file_path}: {e}")
 
-    return kept_components
+    return SubmeshParts(tuple(kept_components))
 
 
 def remove_septum_from_endo(
@@ -809,3 +830,96 @@ def read_clipper(clipper_path: Path) -> Tuple[NDArray[np.float64], float]:
 
     return center, radius
 
+
+
+# FIBRE OPERATIONS
+def correct_degenerate_fibres(
+    fibres: NDArray[np.float64],
+    element_centres: NDArray[np.float64],
+    tolerance: float = 1e-6,
+) -> NDArray[np.float64]:
+    """
+    Replace degenerate fibre vectors with their nearest well-defined neighbour.
+
+    `GlRuleFibers` leaves some elements without a usable fibre direction. The
+    repair, ported from `cemrg-heartbuilder`'s `correct_fibres`, is to give
+    each such element the whole fibre row of the nearest element that does
+    have one, measured straight-line between element centres.
+
+    Two properties of the reference implementation are deliberate and are
+    kept, because changing them would change the fibres a mesh gets:
+
+    - **The degeneracy test is on the z-component alone**, ``|f_z| < tolerance``.
+      It is not a vector-norm test, not a NaN test, and not an element-quality
+      test. An element whose fibre lies flat in the xy-plane is treated as
+      degenerate whether or not its vector is a valid unit vector.
+    - **The neighbour search is not restricted by tag.** A degenerate LV
+      element can inherit its fibre from the nearest RV element. Upstream
+      reads no tags at all; its `read_elem` call is commented out.
+
+    One upstream defect is **not** ported. It resolves ties with
+    ``good[np.where(d == d.min())[0]]``, which yields more than one index when
+    two elements are equidistant, and the row assignment then raises. This
+    takes the first such neighbour instead.
+
+    Args:
+        fibres: Fibre array of shape (n_elements, 3) or (n_elements, 6) --
+            fibre direction alone, or fibre plus sheet.
+        element_centres: Element centres, shape (n_elements, 3), as
+            `GlElemCenters` writes them and in the same element order.
+        tolerance: Magnitude below which a z-component counts as degenerate.
+
+    Returns:
+        A corrected copy. The input is not modified.
+
+    Raises:
+        ValueError: If the two arrays disagree on the element count, if the
+            shapes are not two-dimensional as described, or if every element
+            is degenerate, leaving no neighbour to copy from.
+    """
+    if fibres.ndim != 2 or fibres.shape[1] % 3 != 0:
+        raise ValueError(
+            f"Fibre array must have shape (n, 3k); got {fibres.shape}."
+        )
+    if element_centres.ndim != 2 or element_centres.shape[1] != 3:
+        raise ValueError(
+            f"Element centres must have shape (n, 3); got {element_centres.shape}."
+        )
+    if fibres.shape[0] != element_centres.shape[0]:
+        raise ValueError(
+            f"Fibres and element centres disagree on the element count: "
+            f"{fibres.shape[0]} fibre rows against "
+            f"{element_centres.shape[0]} centres. They must be in the same "
+            f"element order, so a mismatch means one of them is stale."
+        )
+
+    degenerate = np.where(np.abs(fibres[:, 2]) < tolerance)[0]
+    logger.info(f"Found {degenerate.shape[0]} elements to correct")
+
+    if degenerate.shape[0] == 0:
+        return fibres.copy()
+
+    well_defined = np.setdiff1d(
+        np.arange(element_centres.shape[0]), degenerate, assume_unique=True
+    )
+    if well_defined.shape[0] == 0:
+        raise ValueError(
+            "Every element has a degenerate fibre, so there is no "
+            "well-defined neighbour to copy from. This usually means the "
+            "fibre file is not the one GlRuleFibers wrote."
+        )
+
+    corrected = fibres.copy()
+    for index in degenerate:
+        distances = np.linalg.norm(
+            element_centres[well_defined, :] - element_centres[index, :], axis=1
+        )
+        # argmin, not `where(d == d.min())`: the latter returns every tied
+        # index and the row assignment below then raises. See the docstring.
+        nearest = well_defined[np.argmin(distances)]
+        corrected[index, :] = fibres[nearest, :]
+
+    remaining = np.where(np.abs(corrected[:, 2]) < tolerance)[0]
+    logger.info(f"Left to correct {remaining.shape[0]}")
+
+    return corrected

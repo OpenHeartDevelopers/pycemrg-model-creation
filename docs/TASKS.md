@@ -56,9 +56,21 @@ this repo.
     -   [X] Create a `FibreLogic` class.
     -   [X] Implement a `run_fibre_generation` method that utilizes the existing `CarpWrapper.gl_rule_fibres` method.
     -   [X] Create an integration test to validate fibre file (`.lon`) creation.
-    -   [ ] Before building on `gl_elem_centers`, fix its argv packing: `wrappers.py:172-173`
-            emit `f"-f {fmt}"` and `f"-p {pstrat}"` as **single** argv elements, so the flag
-            and its value reach the binary as one token.
+    -   [X] Before building on `gl_elem_centers`, fix its argv packing. **Done** —
+            `-f`/`-p` and their values are separate argv elements now, and
+            `tests/test_tools.py` (the wrappers' first unit coverage) pins it, including a
+            general check that no argv element of any wrapped command contains a space.
+    -   [X] **Port `correct_fibres`.** `utilities.mesh.correct_degenerate_fibres` is the
+            pure transform and `FibreLogic.correct_ventricular_fibres` the step that runs
+            `GlElemCenters`, reads back, and overwrites the mesh's `.lon`. Deliberately
+            **not** called by `run_ventricular_fibre_generation` — heartbuilder sequences
+            fibres, centres, correction as three steps and `cemrg-bivbuilder` asked to drive
+            the correction itself. Two reference quirks kept on purpose (degeneracy is
+            `|f_z| < 1e-6`, not a norm; the neighbour search ignores tags, so an LV element
+            can inherit an RV fibre) and one upstream defect **not** ported (its tie
+            resolution returns several indices and the row assignment raises; ours takes the
+            first). Source: `.claude/evidence_tagsconfig_150926.md`. **Not yet run against
+            real binaries.**
     -   [ ] Fix `ekbatch`'s argv packing, a separate defect at `wrappers.py:220-221`:
             `cmd += f" --tagfile {tagfile}"` on a **list** extends it character by character.
             Earlier revisions of this file attributed this line to `gl_elem_centers`; it is

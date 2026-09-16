@@ -14,7 +14,9 @@ from pycemrg_model_creation.meshpaths import (
     CarpMesh,
     CarpSurface,
     SubmeshIndex,
+    SubmeshParts,
     SurfaceMesh,
+    _StemHandle,
 )
 
 
@@ -424,4 +426,134 @@ class TestSubmeshIndexInterop:
         index = SubmeshIndex(tmp_path / "absent")
         assert not index.nod.exists()
         assert not index.eidx.exists()
+        assert list(tmp_path.iterdir()) == []
+
+
+# -- SubmeshParts -------------------------------------------------------
+#
+# The collection `meshtool extract unreachable` discovery hands back. Its
+# whole reason to exist is that a component's name and its directory stop
+# travelling separately, so most of what is pinned here is that the
+# directory survives.
+
+PARTS_DIR = Path("/data/BiV/tmp")
+
+
+class TestSubmeshPartsConstruction:
+    @pytest.mark.parametrize(
+        "member",
+        [
+            "/data/BiV/tmp/epi_endo_cc.part0",
+            Path("/data/BiV/tmp/epi_endo_cc.part0"),
+            CarpMesh("/data/BiV/tmp/epi_endo_cc.part0"),
+        ],
+        ids=["str", "Path", "CarpMesh"],
+    )
+    def test_every_accepted_input_is_stored_as_a_handle(self, member):
+        parts = SubmeshParts([member])
+        assert parts[0] == CarpMesh("/data/BiV/tmp/epi_endo_cc.part0")
+        assert isinstance(parts[0], CarpMesh)
+
+    def test_is_frozen(self):
+        parts = SubmeshParts([PARTS_DIR / "cc.part0"])
+        with pytest.raises(Exception):
+            parts.parts = ()
+
+    def test_equal_contents_compare_equal(self):
+        assert SubmeshParts(["/tmp/cc.part0"]) == SubmeshParts(
+            [CarpMesh("/tmp/cc.part0")]
+        )
+
+    def test_an_empty_set_is_legal(self):
+        # A discovery that found nothing is a real answer, not an error.
+        # `find_numbered_parts` returns this when no .part0 exists.
+        assert len(SubmeshParts(())) == 0
+        assert list(SubmeshParts(())) == []
+
+    @pytest.mark.parametrize("extension", [".elem", ".pts", ".nod", ".eidx"])
+    def test_a_concrete_file_is_refused(self, extension):
+        # Inherited from CarpMesh rather than restated: a caller holding
+        # `cc.part0.elem` is one level too deep, and the collection must not
+        # be a way around the guard.
+        with pytest.raises(ValueError, match="without an extension"):
+            SubmeshParts([f"/data/BiV/tmp/cc.part0{extension}"])
+
+
+class TestSubmeshPartsKeepsTheDirectory:
+    # The defect this type was introduced to remove. Before it, discovery
+    # returned bare names and five sites in `logic/surfaces.py` re-joined the
+    # directory by hand.
+
+    def test_a_member_still_knows_where_it_lives(self):
+        parts = SubmeshParts([PARTS_DIR / "epi_endo_cc.part0"])
+        assert parts[0].directory == PARTS_DIR
+        assert parts[0].elem == PARTS_DIR / "epi_endo_cc.part0.elem"
+
+    def test_reducing_a_member_to_its_basename_would_lose_it(self):
+        # The informative mutation: storing `CarpMesh(part.name)` still yields
+        # a real CarpMesh and still passes every type check above. Only the
+        # directory tells the two apart, which is why this is pinned.
+        parts = SubmeshParts([PARTS_DIR / "epi_endo_cc.part0"])
+        assert parts[0].stem != Path("epi_endo_cc.part0")
+        assert parts[0].stem.is_absolute()
+
+    def test_members_may_sit_in_different_directories(self):
+        # Nothing here asserts one shared directory, which is why the
+        # collection deliberately has no `directory` of its own.
+        parts = SubmeshParts(["/a/cc.part0", "/b/cc.part1"])
+        assert [part.directory for part in parts] == [Path("/a"), Path("/b")]
+
+
+class TestSubmeshPartsDottedStemsAreNotTruncated:
+    @pytest.mark.parametrize("index", [0, 1, 2])
+    def test_the_part_segment_survives(self, index):
+        parts = SubmeshParts([PARTS_DIR / f"epi_endo_cc.part{index}" for index in range(3)])
+        assert parts[index].elem.name == f"epi_endo_cc.part{index}.elem"
+
+    def test_with_suffix_would_have_truncated(self):
+        # The failure this whole module exists to prevent, restated for the
+        # names discovery actually produces.
+        stem = PARTS_DIR / "epi_endo_cc.part0"
+        assert stem.with_suffix(".elem").name == "epi_endo_cc.elem"
+        assert SubmeshParts([stem])[0].elem.name == "epi_endo_cc.part0.elem"
+
+
+class TestSubmeshPartsIsASequence:
+    PARTS = SubmeshParts([PARTS_DIR / f"cc.part{i}" for i in range(3)])
+
+    def test_length_is_the_number_discovered(self):
+        assert len(self.PARTS) == 3
+
+    def test_iterates_in_discovery_order(self):
+        assert [part.name for part in self.PARTS] == [
+            "cc.part0",
+            "cc.part1",
+            "cc.part2",
+        ]
+
+    def test_indexing_yields_the_handle_at_that_position(self):
+        # `logic/surfaces.py` indexes by the position identification chose,
+        # so order and indexing are load-bearing, not incidental.
+        assert self.PARTS[1].name == "cc.part1"
+        assert self.PARTS[-1].name == "cc.part2"
+
+
+class TestSubmeshPartsIsNotAHandle:
+    def test_it_is_deliberately_not_a_stem_handle(self):
+        # A collection has no single stem, so it could not answer `name`,
+        # `directory` or `_sibling` honestly. Pinned because the docstring
+        # makes this claim and a later "tidy-up" might undo it.
+        assert not issubclass(SubmeshParts, _StemHandle)
+
+    @pytest.mark.parametrize("absent", ["stem", "name", "directory", "_sibling"])
+    def test_it_advertises_no_handle_members(self, absent):
+        assert not hasattr(SubmeshParts([PARTS_DIR / "cc.part0"]), absent)
+
+
+class TestSubmeshPartsInterop:
+    def test_touches_no_filesystem(self, tmp_path):
+        # Construction asserts nothing about what exists, as everywhere else
+        # in this module.
+        parts = SubmeshParts([tmp_path / "absent.part0"])
+        assert not parts[0].elem.exists()
         assert list(tmp_path.iterdir()) == []

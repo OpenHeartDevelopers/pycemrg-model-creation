@@ -9,9 +9,20 @@ orientations from a completed UVC (Universal Ventricular Coordinate) run.
 import logging
 from typing import Dict, Optional
 
+from pathlib import Path
+
 from pycemrg_model_creation.logic.contracts import VentricularFibrePaths
+from pycemrg_model_creation.meshpaths import CarpMesh
 from pycemrg_model_creation.tools.mguvc import outputs_for
 from pycemrg_model_creation.tools.wrappers import CarpWrapper
+from pycemrg_model_creation.utilities import mesh as mshu
+
+# The element-centres file GlElemCenters writes beside the mesh. The suffix is
+# an underscore, not a dotted role, because that is the spelling
+# cemrg-heartbuilder uses and `correct_fibres` there reads it back by that
+# name. It is derived here rather than stored on the contract, and it is not a
+# `CarpMesh` member: only a mesh that has been through GlElemCenters has one.
+ELEMENT_CENTRES_SUFFIX = "_elem_centres.pts"
 
 
 class FibreLogic:
@@ -83,6 +94,74 @@ class FibreLogic:
         self.logger.info("Fibre generation completed successfully")
         self.logger.info(f"Fibres written to: {paths.biv_mesh.lon}")
         self.logger.info("=" * 60)
+
+    def correct_ventricular_fibres(
+        self,
+        paths: VentricularFibrePaths,
+        tolerance: float = 1e-6,
+    ) -> None:
+        """
+        Repair degenerate fibre vectors left by GlRuleFibers, in place.
+
+        Runs `GlElemCenters` to get one centre per element, then replaces
+        every fibre whose z-component is below `tolerance` with the whole
+        fibre row of the nearest well-defined element. The mesh's `.lon` is
+        overwritten with the result.
+
+        Deliberately **not** called by
+        :meth:`run_ventricular_fibre_generation`. It is a separate step an
+        orchestrator invokes after generation, which is how
+        `cemrg-heartbuilder` sequences it (fibres, then centres, then
+        correction) and what `cemrg-bivbuilder` asked to be able to do.
+
+        Args:
+            paths: Path contract for the fibre generation workflow
+            tolerance: Magnitude below which a z-component counts as
+                degenerate. The reference pipeline uses 1e-6.
+
+        Raises:
+            FileNotFoundError: If the mesh or its `.lon` is missing
+            ValueError: If the centres and fibres disagree on element count
+
+        Example:
+            >>> fibre_logic.correct_ventricular_fibres(paths=fibre_paths)
+        """
+        self.logger.info("Correcting degenerate ventricular fibres")
+
+        mesh = paths.biv_mesh
+        for description, mesh_file in (
+            ("points", mesh.pts),
+            ("elements", mesh.elem),
+            ("fibres", mesh.lon),
+        ):
+            if not mesh_file.exists():
+                raise FileNotFoundError(
+                    f"Mesh {description} file not found: {mesh_file}. "
+                    f"Fibre correction runs after generation, not before."
+                )
+
+        centres_path = self._element_centres_path(mesh)
+        self.carp.gl_elem_centers(meshname=mesh.stem, output=centres_path)
+
+        fibres = mshu.read_lon(mesh.lon)
+        element_centres = mshu.read_pts(centres_path)
+
+        corrected = mshu.correct_degenerate_fibres(
+            fibres, element_centres, tolerance=tolerance
+        )
+
+        mshu.write_lon(corrected, mesh.lon)
+        self.logger.info(f"Corrected fibres written to: {mesh.lon}")
+
+    @staticmethod
+    def _element_centres_path(mesh: CarpMesh) -> Path:
+        """
+        Where GlElemCenters writes this mesh's element centres.
+
+        Asked for rather than stored, and built from the handle's own
+        directory and name so the two cannot drift apart.
+        """
+        return mesh.directory / f"{mesh.name}{ELEMENT_CENTRES_SUFFIX}"
 
     def _validate_inputs(self, paths: VentricularFibrePaths) -> None:
         """
