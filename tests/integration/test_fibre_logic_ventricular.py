@@ -61,6 +61,8 @@ def test_ventricular_fibre_generation(test_data_root, carp_wrapper, tmp_path):
             └── input_mesh/
                 ├── BiV.pts              # BiV submesh
                 ├── BiV.elem
+                ├── BiV.lon              # [1 0 0] placeholder; GlRuleFibers
+                │                        # reads it, then overwrites it
                 ├── BiV.base.vtx         # the four boundary sets mguvc reads,
                 ├── BiV.lvendo.vtx       # stem-prefixed, in the mesh's own
                 ├── BiV.rvendo.vtx       # directory
@@ -92,7 +94,11 @@ def test_ventricular_fibre_generation(test_data_root, carp_wrapper, tmp_path):
     work_dir.mkdir()
 
     source_mesh = CarpMesh(input_mesh_dir / "BiV")
-    for mesh_file in (source_mesh.pts, source_mesh.elem):
+    # .lon travels with .pts/.elem: GlRuleFibers loads the whole family behind
+    # -m and opens the .lon before it writes one. In a real chain the submesh
+    # inherits its parent's fibres from `meshtool extract mesh`; the fixture
+    # carries a [1 0 0] placeholder standing in for that.
+    for mesh_file in (source_mesh.pts, source_mesh.elem, source_mesh.lon):
         assert mesh_file.exists(), f"BiV mesh not found: {mesh_file}"
         shutil.copy(mesh_file, work_dir / mesh_file.name)
 
@@ -147,3 +153,54 @@ def test_ventricular_fibre_generation(test_data_root, carp_wrapper, tmp_path):
     assert not_axis_aligned.any(), "All fibres are the [1 0 0] default — GlRuleFibres did not run"
 
     logging.info("✓ Fibre generation test passed")
+
+    # -- Correction stage -----------------------------------------------
+    # A separate public step, as cemrg-heartbuilder sequences it: generate,
+    # then element centres, then repair. It runs here rather than in its own
+    # test so the slow UVC and generation stages are paid for once.
+    tolerance = 1e-6
+    degenerate_before = int(np.count_nonzero(np.abs(fibres[:, 2]) < tolerance))
+    logging.info(f"Degenerate fibres before correction: {degenerate_before}")
+
+    logging.info("Running fibre correction...")
+    FibreLogic(carp_wrapper).correct_ventricular_fibres(
+        fibre_paths, tolerance=tolerance
+    )
+
+    centres_path = fibre_paths.biv_mesh.directory / (
+        f"{fibre_paths.biv_mesh.name}_elem_centres.pts"
+    )
+    assert centres_path.exists(), (
+        f"GlElemCenters output not found: {centres_path}"
+    )
+
+    corrected = read_lon(lon_path)
+    assert corrected.shape == fibres.shape, (
+        f"Correction changed the fibre array shape: {fibres.shape} -> "
+        f"{corrected.shape}"
+    )
+
+    # The post-condition of the repair: every degenerate row took the whole
+    # fibre row of a well-defined neighbour, so none can be left behind.
+    degenerate_after = int(np.count_nonzero(np.abs(corrected[:, 2]) < tolerance))
+    assert degenerate_after == 0, (
+        f"{degenerate_after} degenerate fibres survived correction "
+        f"(was {degenerate_before})"
+    )
+
+    if degenerate_before == 0:
+        logging.warning(
+            "No degenerate fibres were present, so correction was a no-op on "
+            "this mesh. The assertions above did not exercise the repair."
+        )
+    else:
+        changed = ~np.all(np.isclose(corrected, fibres), axis=1)
+        assert changed.any(), (
+            f"{degenerate_before} fibres were degenerate but nothing changed"
+        )
+        logging.info(
+            f"Corrected {degenerate_before} degenerate fibres; "
+            f"{int(changed.sum())} rows differ"
+        )
+
+    logging.info("✓ Fibre correction test passed")

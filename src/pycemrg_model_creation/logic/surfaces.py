@@ -134,10 +134,14 @@ class SurfaceLogic:
 
             # Step 1: Extract combined epi/endo surface
             ventricle_tags = self.labels.get_tags_string(["LV", "RV"])
-            valve_tags = self.labels.get_tags_string(["MV", "TV", "AV", "PV"])
+            # The pulmonary artery is excluded alongside the valve planes;
+            # cemrg-heartbuilder does the same (meshtools_utils.py:651).
+            exclude_tags = self.labels.get_tags_string(
+                ["MV", "TV", "AV", "PV", "PArt"]
+            )
 
-            # Surface excluding valve openings
-            op_tag = f"{ventricle_tags}-{valve_tags}"
+            # Surface excluding valve openings and the pulmonary artery
+            op_tag = f"{ventricle_tags}-{exclude_tags}"
 
             self.meshtool.extract_surface(
                 input_mesh_path=paths.mesh.stem,
@@ -280,7 +284,7 @@ class SurfaceLogic:
 
             # Extract LV surface, excluding RV, RA, and pulmonary artery
             lv_tags = self.labels.get_tags_string(["LV"])
-            exclude_tags = self.labels.get_tags_string(["RV", "RA"])
+            exclude_tags = self.labels.get_tags_string(["RV", "RA", "PArt"])
 
             op_tag = f"{lv_tags}-{exclude_tags}"
 

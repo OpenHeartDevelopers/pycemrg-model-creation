@@ -27,6 +27,9 @@ def make_biv_mesh(root: Path) -> CarpMesh:
     mesh = CarpMesh(mesh_dir / "BiV")
     mesh.pts.write_text("points")
     mesh.elem.write_text("elements")
+    # GlRuleFibers loads the whole family behind -m, so the .lon is an input
+    # here, not only an output. Tests that need a missing one unlink it.
+    mesh.lon.write_text("fibres")
     return mesh
 
 
@@ -102,6 +105,25 @@ class TestValidateInputs:
 
         wrapper = MagicMock()
         with pytest.raises(FileNotFoundError, match="elements"):
+            FibreLogic(wrapper).run_ventricular_fibre_generation(paths)
+
+        wrapper.gl_rule_fibres.assert_not_called()
+
+    def test_missing_mesh_fibres_raises_before_the_wrapper_runs(self, tmp_path):
+        """
+        GlRuleFibers reads the mesh's .lon before it writes one.
+
+        Without this check the failure surfaces as an opaque non-zero exit
+        from the binary naming a file the caller never knew was an input.
+        """
+        mesh = make_biv_mesh(tmp_path)
+        uvc_output_dir = tmp_path / "BiV" / "uvc"
+        write_laplace_solutions(mesh, uvc_output_dir)
+        mesh.lon.unlink()
+        paths = VentricularFibrePaths(biv_mesh=mesh, uvc_output_dir=uvc_output_dir)
+
+        wrapper = MagicMock()
+        with pytest.raises(FileNotFoundError, match="fibres"):
             FibreLogic(wrapper).run_ventricular_fibre_generation(paths)
 
         wrapper.gl_rule_fibres.assert_not_called()
@@ -209,6 +231,7 @@ class TestCorrectVentricularFibres:
         # Correction runs *after* generation. Without this guard the mesh
         # would go through GlElemCenters for nothing.
         mesh = make_biv_mesh(tmp_path)
+        mesh.lon.unlink()
         carp = MagicMock()
         paths = VentricularFibrePaths(
             biv_mesh=mesh, uvc_output_dir=tmp_path / "BiV" / "uvc"

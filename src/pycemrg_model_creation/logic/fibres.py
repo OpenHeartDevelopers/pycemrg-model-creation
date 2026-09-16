@@ -167,8 +167,17 @@ class FibreLogic:
         """
         Validate the files GlRuleFibres will read.
 
-        That is the mesh (.pts, .elem) and the four Laplace solutions a
-        prior UVC run wrote under `paths.uvc_output_dir`.
+        That is the whole mesh family (.pts, .elem, .lon) and the four
+        Laplace solutions a prior UVC run wrote under
+        `paths.uvc_output_dir`.
+
+        The `.lon` is not optional here. GlRuleFibers loads the mesh behind
+        `-m` in full, so it opens the `.lon` before it writes one, and a
+        missing file surfaces as an opaque non-zero exit rather than a
+        named error. A real chain always has one: `meshtool extract mesh`
+        carries the parent mesh's fibres across into the submesh. This
+        differs from `mguvc`, which fabricates `[1 0 0]` when the `.lon` is
+        absent -- do not carry that tolerance over to this step.
 
         Args:
             paths: VentricularFibrePaths contract
@@ -179,7 +188,11 @@ class FibreLogic:
         self.logger.debug("Validating input files")
 
         mesh = paths.biv_mesh
-        for description, mesh_file in (("points", mesh.pts), ("elements", mesh.elem)):
+        for description, mesh_file in (
+            ("points", mesh.pts),
+            ("elements", mesh.elem),
+            ("fibres", mesh.lon),
+        ):
             if not mesh_file.exists():
                 raise FileNotFoundError(
                     f"Mesh {description} file not found: {mesh_file}"
