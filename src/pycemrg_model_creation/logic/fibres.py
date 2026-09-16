@@ -90,7 +90,7 @@ class FibreLogic:
 
         # Resolved here rather than left to the wrapper, because the output
         # filename is stamped with the angles actually used.
-        angles_used = angles if angles is not None else DEFAULT_FIBRE_ANGLES
+        angles_used = self._validated_angles(angles)
         generated = self._rule_fibres_path(paths.biv_mesh, angles_used)
 
         outputs = outputs_for(paths.biv_mesh, paths.uvc_output_dir)
@@ -173,6 +173,40 @@ class FibreLogic:
 
         mshu.write_lon(corrected, mesh.lon)
         self.logger.info(f"Corrected fibres written to: {mesh.lon}")
+
+    @staticmethod
+    def _validated_angles(angles: Optional[Dict[str, float]]) -> Dict[str, float]:
+        """
+        Resolve the angle set, refusing a partial one.
+
+        `angles` replaces the default wholesale; it is not merged with it. A
+        dict missing a key would therefore send an incomplete angle set to
+        GlRuleFibers, and -- since the output filename is stamped with
+        `alpha_endo` and `alpha_epi` -- would fail as a bare `KeyError` if the
+        missing key happened to be one of those two. Name the problem instead.
+
+        Args:
+            angles: The caller's angles, or None for the library default.
+
+        Returns:
+            A complete angle set.
+
+        Raises:
+            ValueError: If `angles` is given but omits any required key.
+        """
+        if angles is None:
+            return DEFAULT_FIBRE_ANGLES
+
+        missing = sorted(set(DEFAULT_FIBRE_ANGLES) - set(angles))
+        if missing:
+            raise ValueError(
+                f"Incomplete fibre angles: missing {', '.join(missing)}. "
+                f"`angles` replaces the default set wholesale rather than "
+                f"merging with it, so pass all of "
+                f"{', '.join(sorted(DEFAULT_FIBRE_ANGLES))} or omit the "
+                f"argument to use the default."
+            )
+        return angles
 
     @staticmethod
     def _rule_fibres_path(mesh: CarpMesh, angles: Dict[str, float]) -> Path:

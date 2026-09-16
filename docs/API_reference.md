@@ -79,65 +79,84 @@ surface_logic.run_ventricular_extraction(paths=paths.ventricular)
 
 ### Configuration
 
-#### `TagsConfig`
+#### `label_manager_from_mapping`
 
-Configuration for mesh element tags representing anatomical regions.
+> **`TagsConfig` was removed.** It was a second tag vocabulary overlapping `LabelManager`, and it
+> *silently skipped* names it did not recognise, so a typo produced a short tag string and a quietly
+> wrong mesh. Tags now come from one place: `pycemrg`'s `LabelManager`, which raises on an unknown
+> name and lists the valid keys. See the migration note at the end of this section.
 
-**Constructor:**
+`LabelManager` is normally built from a YAML manifest:
+
 ```python
-from pycemrg_model_creation import TagsConfig
+from pycemrg.data import LabelManager
 
-tags = TagsConfig(
-    LV=1,           # Left ventricle
-    RV=2,           # Right ventricle
-    LA=3,           # Left atrium
-    RA=4,           # Right atrium
-    MV=5,           # Mitral valve
-    TV=6,           # Tricuspid valve
-    AV=7,           # Aortic valve
-    PV=8,           # Pulmonary valve
-    PArt=9          # Pulmonary artery
-)
+labels = LabelManager(config_path="/work/case01/config/labels.yaml")
 ```
 
-**Methods:**
+For callers holding tags in memory rather than in a file, this library supplies a factory.
 
-##### `from_dict(tags_dict: Dict[str, Union[int, List[int]]]) -> TagsConfig`
+##### `label_manager_from_mapping(tags, groups=None) -> LabelManager`
 
-Create TagsConfig from dictionary.
+Build a `LabelManager` from an in-memory mapping. Returns a plain `LabelManager` — deliberately not
+a subclass, so only one type reaches the rest of the library.
 
 ```python
-tags = TagsConfig.from_dict({
-    "LV": 1,
-    "RV": 2,
-    "LA": [3, 4]  # Multiple tags supported
+from pycemrg_model_creation import label_manager_from_mapping
+
+labels = label_manager_from_mapping({
+    "LV": 1,        # Left ventricle
+    "RV": 2,        # Right ventricle
+    "LA": 3,        # Left atrium
+    "RA": 4,        # Right atrium
+    "MV": 7,        # Mitral valve
+    "TV": 8,        # Tricuspid valve
+    "AV": 9,        # Aortic valve
+    "PV": 10,       # Pulmonary valve
+    "PArt": 6,      # Pulmonary artery
 })
+
+labels.get_tags_string(["LV", "RV"])        # "1,2"
+labels.get_values_from_names(["LV", "RV"])  # [1, 2]
+labels.get_value("LV")                      # 1
 ```
 
-##### `to_dict() -> Dict[str, Union[int, List[int]]]`
-
-Convert to dictionary.
-
-##### `get_tags_string(keys: List[str]) -> str`
-
-Get comma-separated string of tags for specified anatomical regions.
+A value may be a single integer or a list of them, as `TagsConfig` allowed:
 
 ```python
-# Get tags for ventricles
-ventricle_tags = tags.get_tags_string(["LV", "RV"])  # "1,2"
-
-# Multiple tags per region are flattened
-tags = TagsConfig(LV=[1, 2, 3], RV=4)
-all_tags = tags.get_tags_string(["LV", "RV"])  # "1,2,3,4"
+labels = label_manager_from_mapping({"LV": [1, 2, 3], "RV": 4})
+labels.get_tags_string(["LV", "RV"])        # "1,2,3,4"
 ```
 
-##### `get_tags_list(keys: List[str]) -> List[int]`
-
-Get flat list of tag integers.
+Named groups are also accepted, and resolve recursively:
 
 ```python
-tag_list = tags.get_tags_list(["LV", "RV"])  # [1, 2]
+labels = label_manager_from_mapping(
+    {"LV_myo": 1, "LV_bp": 3, "RV": 2},
+    groups={"LV": ["LV_myo", "LV_bp"]},
+)
+labels.get_tags_string(["LV"])              # "1,3"
 ```
+
+Raises `ValueError` if a value is not an integer or a list of integers, or if a name is defined both
+as a value list and as a group.
+
+**Migrating from `TagsConfig`:**
+
+| was | now |
+|---|---|
+| `TagsConfig(LV=1, RV=2, ...)` | `label_manager_from_mapping({"LV": 1, "RV": 2, ...})` |
+| `TagsConfig.from_dict({...})` | `label_manager_from_mapping({...})` |
+| `tags.get_tags_string([...])` | `labels.get_tags_string([...])` |
+| `tags.get_tags_list([...])` | `labels.get_values_from_names([...])` |
+| `tags.to_dict()` | no equivalent |
+
+Two behaviour differences to expect. `get_values_from_names` returns a **sorted, de-duplicated** list
+where `get_tags_list` preserved order and duplicates. And an unrecognised name now **raises**
+`KeyError` instead of being skipped.
+
+`label_manager_from_mapping` is a candidate for `LabelManager` itself in a later `pycemrg` release;
+it touches none of `LabelManager`'s internals, so that migration will be a deletion.
 
 ---
 
@@ -270,24 +289,27 @@ Extract atrial epicardium and endocardium.
 
 #### Submesh Extraction Methods
 
-##### `run_biv_mesh_extraction(paths: BiVMeshPaths, tags: TagsConfig) -> None`
+##### `run_biv_mesh_extraction(paths: BiVMeshPaths) -> None`
 
 Extract biventricular submesh from four-chamber mesh and map VTX files.
+
+Tags come from the `LabelManager` injected at construction. This method took a `tags: TagsConfig`
+argument until that class was removed.
 
 **Workflow:**
 1. Extract submesh containing only LV and RV tags
 2. Map VTX boundary condition files from full mesh to BiV submesh
 
 ```python
-surface_logic.run_biv_mesh_extraction(
-    paths=biv_mesh_paths,
-    tags=tags
-)
+surface_logic.run_biv_mesh_extraction(paths=biv_mesh_paths)
 ```
 
-##### `run_atrial_mesh_extraction(paths: AtrialMeshPaths, tags: TagsConfig, chamber: Chamber) -> None`
+##### `run_atrial_mesh_extraction(paths: AtrialMeshPaths, chamber: Chamber) -> None`
 
-Extract atrial submesh and map VTX files.
+Extract atrial submesh and map VTX files. Tags come from the injected `LabelManager`.
+
+> `chamber` is now the **second** positional argument. A caller that passed it positionally after
+> `tags` must drop that argument.
 
 **Special handling:**
 - Copies blank template files for apex/septum (not applicable to atria but required for UVC interface compatibility)
@@ -296,17 +318,22 @@ Extract atrial submesh and map VTX files.
 
 #### Complete Workflow
 
-##### `run_all(paths: UVCSurfaceExtractionPaths, tags: TagsConfig, ventricular_files_to_map: Optional[List[Path]] = None, la_files_to_map: Optional[List[Path]] = None, ra_files_to_map: Optional[List[Path]] = None) -> None`
+##### `run_all(paths: UVCSurfaceExtractionPaths, ventricular_files_to_map=None, la_files_to_map=None, ra_files_to_map=None) -> None`
 
-Execute complete UVC surface extraction for all chambers.
+**Raises `NotImplementedError`. Do not call it.**
 
-**Workflow phases:**
-1. Ventricular surfaces
-2. LA surfaces
-3. RA surfaces
-4. BiV submesh extraction
-5. LA submesh extraction
-6. RA submesh extraction
+Its calls had drifted out of step with the phase methods they invoked —
+`run_ventricular_extraction` takes `(self, paths)` while this passed three arguments — so every call
+raised `TypeError` and nothing depended on it. It is kept as a deliberate stub rather than deleted,
+because the right signature for a whole-workflow entry point is not knowable until the phase methods
+settle.
+
+Drive the phase methods directly, in this order:
+
+1. `run_ventricular_extraction` — ventricular surfaces
+2. `run_atrial_extraction` — LA, then RA
+3. `run_biv_mesh_extraction` — BiV submesh and VTX remapping
+4. `run_atrial_mesh_extraction` — LA, then RA submeshes
 
 ---
 
@@ -1274,7 +1301,6 @@ from pycemrg_model_creation import (
     RefinementPathBuilder,
     ModelCreationPathBuilder,
     MeshtoolWrapper,
-    TagsConfig
 )
 from pycemrg_model_creation.types import Chamber
 
@@ -1339,24 +1365,12 @@ surface_paths = surface_builder.build_all(
 
 surface_logic = SurfaceLogic(meshtool, target_label_manager)
 
-# Create tags config for surface extraction
-tags = TagsConfig(
-    LV=target_label_manager.get_value("LV"),
-    RV=target_label_manager.get_value("RV"),
-    LA=target_label_manager.get_value("LA"),
-    RA=target_label_manager.get_value("RA"),
-    MV=target_label_manager.get_value("MV"),
-    TV=target_label_manager.get_value("TV"),
-    AV=target_label_manager.get_value("AV"),
-    PV=target_label_manager.get_value("PV"),
-    PArt=target_label_manager.get_value("PArt")
-)
-
-# Extract all surfaces and submeshes
-surface_logic.run_all(
-    paths=surface_paths,
-    tags=tags
-)
+# Tags come from the LabelManager already injected above -- there is no
+# second tag object to build.
+#
+# run_all raises NotImplementedError; drive the phase methods directly.
+surface_logic.run_ventricular_extraction(paths=surface_paths.ventricular)
+surface_logic.run_biv_mesh_extraction(paths=surface_paths.biv_mesh)
 
 logging.info("=" * 60)
 logging.info("MODEL CREATION COMPLETE")
@@ -1375,7 +1389,6 @@ from pycemrg_model_creation import (
     SurfaceLogic,
     MeshtoolWrapper,
     ModelCreationPathBuilder,
-    TagsConfig
 )
 
 # Initialize
@@ -1396,23 +1409,10 @@ all_paths = builder.build_all(
 surface_logic = SurfaceLogic(meshtool, label_manager)
 surface_logic.run_ventricular_extraction(paths=all_paths.ventricular)
 
-# Extract BiV submesh
-tags = TagsConfig(
-    LV=label_manager.get_value("LV"),
-    RV=label_manager.get_value("RV"),
-    LA=label_manager.get_value("LA"),
-    RA=label_manager.get_value("RA"),
-    MV=label_manager.get_value("MV"),
-    TV=label_manager.get_value("TV"),
-    AV=label_manager.get_value("AV"),
-    PV=label_manager.get_value("PV"),
-    PArt=label_manager.get_value("PArt")
-)
-
-surface_logic.run_biv_mesh_extraction(
-    paths=all_paths.biv_mesh,
-    tags=tags
-)
+# Extract BiV submesh. Not optional: the surfaces above carry four-chamber
+# node indices, and this remaps every boundary onto the BiV submesh that
+# mguvc will actually run on.
+surface_logic.run_biv_mesh_extraction(paths=all_paths.biv_mesh)
 
 print(f"✓ Ventricular surfaces ready for UVC calculation")
 ```

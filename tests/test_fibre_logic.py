@@ -103,6 +103,39 @@ class TestRunVentricularFibreGeneration:
         assert mesh.lon.read_text() == "new fibres"
         assert generated.read_text() == "new fibres"
 
+    def test_a_partial_angles_dict_is_refused_by_name(self, tmp_path):
+        """
+        `angles` replaces the default wholesale rather than merging.
+
+        A partial dict used to fail as a bare `KeyError` from the filename
+        stamp, naming one missing key and blaming the wrong thing.
+        """
+        mesh = make_biv_mesh(tmp_path)
+        uvc_output_dir = tmp_path / "BiV" / "uvc"
+        write_laplace_solutions(mesh, uvc_output_dir)
+        paths = VentricularFibrePaths(biv_mesh=mesh, uvc_output_dir=uvc_output_dir)
+
+        wrapper = gl_rule_fibres_stub(MagicMock())
+        with pytest.raises(ValueError, match="alpha_epi, beta_endo, beta_epi"):
+            FibreLogic(wrapper).run_ventricular_fibre_generation(
+                paths, angles={"alpha_endo": 50}
+            )
+
+        wrapper.gl_rule_fibres.assert_not_called()
+
+    def test_a_complete_angles_dict_is_accepted(self, tmp_path):
+        """The guard must not reject a valid four-key set."""
+        mesh = make_biv_mesh(tmp_path)
+        uvc_output_dir = tmp_path / "BiV" / "uvc"
+        write_laplace_solutions(mesh, uvc_output_dir)
+        paths = VentricularFibrePaths(biv_mesh=mesh, uvc_output_dir=uvc_output_dir)
+        angles = {"alpha_endo": 50, "alpha_epi": -50, "beta_endo": -60, "beta_epi": 20}
+
+        wrapper = gl_rule_fibres_stub(MagicMock())
+        FibreLogic(wrapper).run_ventricular_fibre_generation(paths, angles=angles)
+
+        assert wrapper.gl_rule_fibres.call_args.kwargs["angles"] == angles
+
     def test_the_stamp_follows_the_angles_actually_used(self, tmp_path):
         """Two angle sets must not collide on one filename."""
         mesh = make_biv_mesh(tmp_path)
