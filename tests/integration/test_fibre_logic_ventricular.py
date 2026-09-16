@@ -131,6 +131,18 @@ def test_ventricular_fibre_generation(test_data_root, carp_wrapper, tmp_path):
     assert lon_path.exists(), f"Fibre file not generated: {lon_path}"
     assert lon_path.stat().st_size > 0, f"{lon_path.name} is empty"
 
+    # GlRuleFibers writes an angle-stamped file beside the mesh, which is then
+    # copied onto the `.lon`. Both survive: the mesh's own fibres are an input
+    # to the run, so they are never the thing the binary writes.
+    mesh_handle = fibre_paths.biv_mesh
+    generated = mesh_handle.directory / f"{mesh_handle.name}_fibres_bayer_60_-60.lon"
+    assert generated.exists(), (
+        f"Angle-stamped fibre file not found: {generated}"
+    )
+    assert generated.read_bytes() == lon_path.read_bytes(), (
+        "The .lon does not match the file GlRuleFibers wrote"
+    )
+
     fibres = read_lon(lon_path)
     elements = read_elem(fibre_paths.biv_mesh.elem)
 

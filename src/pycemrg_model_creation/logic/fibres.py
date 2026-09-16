@@ -7,6 +7,7 @@ orientations from a completed UVC (Universal Ventricular Coordinate) run.
 """
 
 import logging
+import shutil
 from typing import Dict, Optional
 
 from pathlib import Path
@@ -14,7 +15,7 @@ from pathlib import Path
 from pycemrg_model_creation.logic.contracts import VentricularFibrePaths
 from pycemrg_model_creation.meshpaths import CarpMesh
 from pycemrg_model_creation.tools.mguvc import outputs_for
-from pycemrg_model_creation.tools.wrappers import CarpWrapper
+from pycemrg_model_creation.tools.wrappers import DEFAULT_FIBRE_ANGLES, CarpWrapper
 from pycemrg_model_creation.utilities import mesh as mshu
 
 # The element-centres file GlElemCenters writes beside the mesh. The suffix is
@@ -23,6 +24,15 @@ from pycemrg_model_creation.utilities import mesh as mshu
 # name. It is derived here rather than stored on the contract, and it is not a
 # `CarpMesh` member: only a mesh that has been through GlElemCenters has one.
 ELEMENT_CENTRES_SUFFIX = "_elem_centres.pts"
+
+# The rule-based fibre file GlRuleFibers writes, before it is copied onto the
+# mesh's own `.lon`. Underscore-spelled and angle-stamped, as
+# cemrg-heartbuilder spells it (`FourChamberModeler.get_meshname_fibres`), so
+# two runs at different angles leave two distinguishable files rather than one
+# that silently changed. Derived here for the same reason as
+# ELEMENT_CENTRES_SUFFIX: only a mesh that has been through GlRuleFibers has
+# one, and there is a single call site.
+RULE_FIBRES_PREFIX = "_fibres_bayer"
 
 
 class FibreLogic:
@@ -78,6 +88,11 @@ class FibreLogic:
 
         self._validate_inputs(paths)
 
+        # Resolved here rather than left to the wrapper, because the output
+        # filename is stamped with the angles actually used.
+        angles_used = angles if angles is not None else DEFAULT_FIBRE_ANGLES
+        generated = self._rule_fibres_path(paths.biv_mesh, angles_used)
+
         outputs = outputs_for(paths.biv_mesh, paths.uvc_output_dir)
         self.carp.gl_rule_fibres(
             mesh_name=paths.biv_mesh.stem,
@@ -85,14 +100,20 @@ class FibreLogic:
             uvc_epi=outputs.sol_endoepi,
             uvc_lv=outputs.sol_lvendo,
             uvc_rv=outputs.sol_rvendo,
-            output_name=paths.biv_mesh.lon,
-            angles=angles,
+            output_name=generated,
+            angles=angles_used,
             fibre_type=fibre_type,
         )
 
+        # GlRuleFibers reads the mesh's own `.lon` as an input, so it must not
+        # be the thing GlRuleFibers writes: a run that died mid-write would
+        # leave the mesh unusable for a retry. Write beside it, then copy on.
+        shutil.copyfile(generated, paths.biv_mesh.lon)
+
         self.logger.info("=" * 60)
         self.logger.info("Fibre generation completed successfully")
-        self.logger.info(f"Fibres written to: {paths.biv_mesh.lon}")
+        self.logger.info(f"Fibres generated at: {generated}")
+        self.logger.info(f"Copied onto mesh fibres: {paths.biv_mesh.lon}")
         self.logger.info("=" * 60)
 
     def correct_ventricular_fibres(
@@ -152,6 +173,19 @@ class FibreLogic:
 
         mshu.write_lon(corrected, mesh.lon)
         self.logger.info(f"Corrected fibres written to: {mesh.lon}")
+
+    @staticmethod
+    def _rule_fibres_path(mesh: CarpMesh, angles: Dict[str, float]) -> Path:
+        """
+        Where GlRuleFibers writes this run's fibres, before they are copied
+        onto the mesh's `.lon`.
+
+        Stamped with the two alpha angles, as cemrg-heartbuilder stamps it,
+        so a second run at different angles produces a second file instead of
+        overwriting the first with no record of which angles are in it.
+        """
+        stamp = f"{angles['alpha_endo']}_{angles['alpha_epi']}"
+        return mesh.directory / f"{mesh.name}{RULE_FIBRES_PREFIX}_{stamp}.lon"
 
     @staticmethod
     def _element_centres_path(mesh: CarpMesh) -> Path:

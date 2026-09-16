@@ -9,7 +9,7 @@ from pycemrg_model_creation import logic
 from pycemrg_model_creation import utilities
 
 # Elevate the most important user-facing classes for convenience
-from pycemrg_model_creation.config import TagsConfig
+from pycemrg_model_creation.config import label_manager_from_mapping
 from pycemrg_model_creation.meshpaths import (
     CarpMesh,
     CarpSurface,
@@ -24,7 +24,7 @@ __all__ = [
     "CarpSurface",
     "SurfaceMesh",
     "SubmeshIndex",
-    "TagsConfig",
+    "label_manager_from_mapping",
     "SurfaceLogic",
     "CarpWrapper",
     "MeshtoolWrapper",

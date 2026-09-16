@@ -19,6 +19,7 @@ from pycemrg_model_creation.logic.contracts import VentricularFibrePaths
 from pycemrg_model_creation.logic.fibres import FibreLogic
 from pycemrg_model_creation.meshpaths import CarpMesh
 from pycemrg_model_creation.tools.mguvc import outputs_for
+from pycemrg_model_creation.tools.wrappers import DEFAULT_FIBRE_ANGLES
 
 
 def make_biv_mesh(root: Path) -> CarpMesh:
@@ -31,6 +32,21 @@ def make_biv_mesh(root: Path) -> CarpMesh:
     # here, not only an output. Tests that need a missing one unlink it.
     mesh.lon.write_text("fibres")
     return mesh
+
+
+def gl_rule_fibres_stub(wrapper: MagicMock, content: str = "generated fibres"):
+    """
+    Make a mocked `gl_rule_fibres` write the file it is given.
+
+    `run_ventricular_fibre_generation` copies that file onto the mesh's
+    `.lon`, so a mock that writes nothing leaves the copy with no source.
+    """
+
+    def _write(**kwargs):
+        Path(kwargs["output_name"]).write_text(content)
+
+    wrapper.gl_rule_fibres.side_effect = _write
+    return wrapper
 
 
 def write_laplace_solutions(mesh: CarpMesh, uvc_output_dir: Path) -> None:
@@ -49,19 +65,57 @@ class TestRunVentricularFibreGeneration:
         outputs = outputs_for(mesh, uvc_output_dir)
         paths = VentricularFibrePaths(biv_mesh=mesh, uvc_output_dir=uvc_output_dir)
 
-        wrapper = MagicMock()
+        wrapper = gl_rule_fibres_stub(MagicMock())
         FibreLogic(wrapper).run_ventricular_fibre_generation(paths)
 
+        # Default angles, so the stamped name carries 60 and -60.
+        generated = mesh.directory / f"{mesh.name}_fibres_bayer_60_-60.lon"
         wrapper.gl_rule_fibres.assert_called_once_with(
             mesh_name=mesh.stem,
             uvc_apba=outputs.sol_apba,
             uvc_epi=outputs.sol_endoepi,
             uvc_lv=outputs.sol_lvendo,
             uvc_rv=outputs.sol_rvendo,
-            output_name=mesh.lon,
-            angles=None,
+            output_name=generated,
+            angles=DEFAULT_FIBRE_ANGLES,
             fibre_type="biv",
         )
+
+    def test_writes_beside_the_mesh_then_copies_onto_the_lon(self, tmp_path):
+        """
+        GlRuleFibers must not write the `.lon` it is also reading.
+
+        The mesh's own fibres are an input to the run, so a crash mid-write
+        would leave the mesh unusable for a retry. Both files must survive,
+        with the same content.
+        """
+        mesh = make_biv_mesh(tmp_path)
+        uvc_output_dir = tmp_path / "BiV" / "uvc"
+        write_laplace_solutions(mesh, uvc_output_dir)
+        paths = VentricularFibrePaths(biv_mesh=mesh, uvc_output_dir=uvc_output_dir)
+
+        wrapper = gl_rule_fibres_stub(MagicMock(), content="new fibres")
+        FibreLogic(wrapper).run_ventricular_fibre_generation(paths)
+
+        generated = mesh.directory / f"{mesh.name}_fibres_bayer_60_-60.lon"
+        assert generated.exists(), "the angle-stamped file was not kept"
+        assert generated != mesh.lon, "GlRuleFibers was pointed at its own input"
+        assert mesh.lon.read_text() == "new fibres"
+        assert generated.read_text() == "new fibres"
+
+    def test_the_stamp_follows_the_angles_actually_used(self, tmp_path):
+        """Two angle sets must not collide on one filename."""
+        mesh = make_biv_mesh(tmp_path)
+        uvc_output_dir = tmp_path / "BiV" / "uvc"
+        write_laplace_solutions(mesh, uvc_output_dir)
+        paths = VentricularFibrePaths(biv_mesh=mesh, uvc_output_dir=uvc_output_dir)
+        angles = {"alpha_endo": 40, "alpha_epi": -50, "beta_endo": -60, "beta_epi": 20}
+
+        wrapper = gl_rule_fibres_stub(MagicMock())
+        FibreLogic(wrapper).run_ventricular_fibre_generation(paths, angles=angles)
+
+        written = wrapper.gl_rule_fibres.call_args.kwargs["output_name"]
+        assert written.name == f"{mesh.name}_fibres_bayer_40_-50.lon"
 
     def test_passes_through_angles_and_fibre_type(self, tmp_path):
         mesh = make_biv_mesh(tmp_path)
@@ -70,7 +124,7 @@ class TestRunVentricularFibreGeneration:
         paths = VentricularFibrePaths(biv_mesh=mesh, uvc_output_dir=uvc_output_dir)
         angles = {"alpha_endo": 50, "alpha_epi": -50, "beta_endo": -60, "beta_epi": 20}
 
-        wrapper = MagicMock()
+        wrapper = gl_rule_fibres_stub(MagicMock())
         FibreLogic(wrapper).run_ventricular_fibre_generation(
             paths, angles=angles, fibre_type="lv"
         )
@@ -252,7 +306,7 @@ class TestCorrectionIsASeparateStep:
         mesh = make_biv_mesh(tmp_path)
         uvc_output_dir = tmp_path / "BiV" / "uvc"
         write_laplace_solutions(mesh, uvc_output_dir)
-        carp = MagicMock()
+        carp = gl_rule_fibres_stub(MagicMock())
         paths = VentricularFibrePaths(biv_mesh=mesh, uvc_output_dir=uvc_output_dir)
 
         FibreLogic(carp).run_ventricular_fibre_generation(paths)

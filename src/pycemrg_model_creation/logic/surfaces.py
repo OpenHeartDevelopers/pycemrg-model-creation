@@ -18,7 +18,6 @@ import numpy as np
 
 from pycemrg.data.labels import LabelManager
 
-from pycemrg_model_creation.config import TagsConfig
 from pycemrg_model_creation.logic.contracts import (
     VentricularSurfacePaths,
     AtrialSurfacePaths,
@@ -660,13 +659,15 @@ class SurfaceLogic:
 
     # SUBMESH EXTRACTION AND MAPPING
 
-    def extract_biv_submesh(self, paths: BiVMeshPaths, tags: TagsConfig) -> None:
+    def extract_biv_submesh(self, paths: BiVMeshPaths) -> None:
         """
         Extract biventricular (BiV) submesh from four-chamber mesh.
 
+        Tags come from the injected `LabelManager`, as they do everywhere else
+        in this class.
+
         Args:
             paths: BiV mesh paths contract
-            tags: Tag configuration
 
         Raises:
             SurfaceExtractionError: If extraction fails
@@ -674,7 +675,7 @@ class SurfaceLogic:
         try:
             self.logger.info("Extracting BiV submesh")
 
-            biv_tags = tags.get_tags_list(["LV", "RV"])
+            biv_tags = self.labels.get_values_from_names(["LV", "RV"])
 
             self.meshtool.extract_mesh(
                 input_mesh_path=paths.source_mesh,
@@ -747,14 +748,16 @@ class SurfaceLogic:
             self.logger.debug(f"Renamed {mapped.name} -> {target.name}")
 
     def extract_atrial_submesh(
-        self, paths: AtrialMeshPaths, tags: TagsConfig, chamber: Chamber
+        self, paths: AtrialMeshPaths, chamber: Chamber
     ) -> None:
         """
         Extract atrial submesh (LA or RA) from four-chamber mesh.
 
+        Tags come from the injected `LabelManager`, as they do everywhere else
+        in this class.
+
         Args:
             paths: Atrial mesh paths contract
-            tags: Tag configuration
             chamber: Chamber.LA or Chamber.RA
 
         Raises:
@@ -763,7 +766,7 @@ class SurfaceLogic:
         try:
             self.logger.info(f"Extracting {chamber.value} submesh")
 
-            atrial_tags = tags.get_tags_list([chamber.value])
+            atrial_tags = self.labels.get_values_from_names([chamber.value])
 
             self.meshtool.extract_mesh(
                 input_mesh_path=paths.source_mesh,
@@ -897,13 +900,12 @@ class SurfaceLogic:
         self.logger.info(f"{chamber.value} EXTRACTION COMPLETE")
         self.logger.info("=" * 60)
 
-    def run_biv_mesh_extraction(self, paths: BiVMeshPaths, tags: TagsConfig) -> None:
+    def run_biv_mesh_extraction(self, paths: BiVMeshPaths) -> None:
         """
         Run BiV submesh extraction and VTX mapping workflow.
 
         Args:
             paths: BiV mesh paths contract
-            tags: Tag configuration
 
         Raises:
             SurfaceExtractionError: If any step fails
@@ -912,7 +914,7 @@ class SurfaceLogic:
         self.logger.info("STARTING BIV MESH EXTRACTION WORKFLOW")
         self.logger.info("=" * 60)
 
-        self.extract_biv_submesh(paths, tags)
+        self.extract_biv_submesh(paths)
         self.map_vtx_to_submesh(paths)
 
         self.logger.info("=" * 60)
@@ -920,14 +922,13 @@ class SurfaceLogic:
         self.logger.info("=" * 60)
 
     def run_atrial_mesh_extraction(
-        self, paths: AtrialMeshPaths, tags: TagsConfig, chamber: Chamber
+        self, paths: AtrialMeshPaths, chamber: Chamber
     ) -> None:
         """
         Run atrial submesh extraction and VTX mapping workflow.
 
         Args:
             paths: Atrial mesh paths contract
-            tags: Tag configuration
             chamber: Chamber.LA or Chamber.RA
 
         Raises:
@@ -937,7 +938,7 @@ class SurfaceLogic:
         self.logger.info(f"STARTING {chamber.value} MESH EXTRACTION WORKFLOW")
         self.logger.info("=" * 60)
 
-        self.extract_atrial_submesh(paths, tags, chamber)
+        self.extract_atrial_submesh(paths, chamber)
         self.map_vtx_to_atrial_submesh(paths, chamber)
 
         self.logger.info("=" * 60)
@@ -947,7 +948,6 @@ class SurfaceLogic:
     def run_all(
         self,
         paths: UVCSurfaceExtractionPaths,
-        tags: TagsConfig,
         ventricular_files_to_map: Optional[List[Path]] = None,
         la_files_to_map: Optional[List[Path]] = None,
         ra_files_to_map: Optional[List[Path]] = None,
