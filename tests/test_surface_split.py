@@ -167,6 +167,71 @@ class TestTheFilesWritten:
         assert not (tmp_path / "epi_endo_cc.part0.vtk").exists()
 
 
+class TestElementTags:
+    """
+    `meshtool` writes the region tag of the element each triangle bounds, and
+    it is load-bearing: inside the RV endocardium it is what separates the
+    septum (LV tissue) from the free wall. Dropping it is a silent loss --
+    the files are still valid, just less informative.
+    """
+
+    # Tag the two triangles differently, so a component picking the wrong row
+    # is visible rather than lucky.
+    TAGS = np.array([1, 2])
+
+    def test_tags_are_carried_into_the_elem(self, split, tmp_path):
+        write_split_component(split[1], POINTS, PINCHED, tags=self.TAGS)
+        # `read_elem`, like `read_surf`, has no `ndmin=2`, so a one-element
+        # file comes back 1-D. A property of the reader, not of what we wrote.
+        elements = np.atleast_2d(
+            mshu.read_elem(split[1].mesh.elem, elem_type=ElemType.Tr, read_tags=True)
+        )
+
+        assert elements[:, 3].tolist() == [2]
+
+    def test_each_component_gets_its_own_rows(self, split, tmp_path):
+        for component in split:
+            write_split_component(component, POINTS, PINCHED, tags=self.TAGS)
+
+        first = np.atleast_2d(
+            mshu.read_elem(split[0].mesh.elem, elem_type=ElemType.Tr, read_tags=True)
+        )
+        second = np.atleast_2d(
+            mshu.read_elem(split[1].mesh.elem, elem_type=ElemType.Tr, read_tags=True)
+        )
+
+        assert first[:, 3].tolist() == [1]
+        assert second[:, 3].tolist() == [2]
+
+    def test_the_vtk_carries_elemtag_under_meshtools_name(self, split, tmp_path):
+        """
+        Named `elemTag` so the same ParaView colouring works on our parts and
+        on meshtool's.
+        """
+        import pyvista as pv
+
+        write_split_component(split[1], POINTS, PINCHED, tags=self.TAGS)
+        mesh = pv.read(split[1].mesh.vtk)
+
+        assert mesh.cell_data["elemTag"].tolist() == [2]
+
+    def test_omitting_tags_falls_back_to_one(self, split, tmp_path):
+        write_split_component(split[1], POINTS, PINCHED)
+        elements = np.atleast_2d(
+            mshu.read_elem(split[1].mesh.elem, elem_type=ElemType.Tr, read_tags=True)
+        )
+
+        assert elements[:, 3].tolist() == [1]
+
+    def test_tags_that_do_not_describe_the_surface_are_refused(
+        self, split, tmp_path
+    ):
+        with pytest.raises(ValueError, match="do not describe each other"):
+            write_split_component(
+                split[0], POINTS, PINCHED, tags=np.array([1, 2, 3, 4])
+            )
+
+
 class TestTheRoundTrip:
     """
     The one that matters: what the pipeline gets back out.

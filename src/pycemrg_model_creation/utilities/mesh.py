@@ -894,6 +894,7 @@ def write_split_component(
     component: SplitComponent,
     points: NDArray[np.float64],
     surf: NDArray[np.int_],
+    tags: NDArray[np.int_] = None,
     write_vtk: bool = True,
 ) -> None:
     """
@@ -918,8 +919,21 @@ def write_split_component(
             name and the directory cannot disagree.
         points: Parent mesh coordinates.
         surf: The parent surface the component indexes into.
+        tags: One region tag per row of `surf`, as `epi_endo.neubc` column 3
+            carries them. They go into the `.elem` and onto the `.vtk` as
+            `elemTag`, which is what `meshtool` writes and what makes the
+            septum visible inside the RV endocardium. Omitted, every triangle
+            is tagged 1 and that distinction is lost.
         write_vtk: Also write a `.vtk`, for looking at.
+
+    Raises:
+        ValueError: If `tags` is given but does not describe `surf`.
     """
+    if tags is not None and len(tags) != surf.shape[0]:
+        raise ValueError(
+            f"Got {len(tags)} tags for a surface of {surf.shape[0]} triangles; "
+            "they do not describe each other."
+        )
     mesh = component.mesh
 
     subsurf = surf[component.triangles]
@@ -929,13 +943,14 @@ def write_split_component(
     index_map[component.vertices] = np.arange(len(component.vertices))
     local = index_map[subsurf]
 
-    write_pts(points[component.vertices], mesh.pts)
-    write_elem(
-        local,
-        np.ones(local.shape[0], dtype=int),
-        mesh.elem,
-        elem_type=ElemType.Tr,
+    element_tags = (
+        np.ones(local.shape[0], dtype=int)
+        if tags is None
+        else np.asarray(tags)[component.triangles]
     )
+
+    write_pts(points[component.vertices], mesh.pts)
+    write_elem(local, element_tags, mesh.elem, elem_type=ElemType.Tr)
 
     # `.nod` is relative to the whole surface's vertex list, not to the parent
     # mesh: `connected_component_to_surface` does `surf2vtx(surf)[nod]`.
@@ -950,6 +965,9 @@ def write_split_component(
             points[component.vertices],
             faces=np.hstack((padding, local)).flatten(),
         )
+        # Named *and typed* to match what meshtool writes (`SCALARS elemTag
+        # int`), so the same ParaView colouring works on either without a cast.
+        polydata.cell_data["elemTag"] = element_tags.astype(np.int32)
         polydata.save(mesh.vtk, binary=False)
 
     logger.info(

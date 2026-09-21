@@ -24,7 +24,7 @@ Examples:
         --neubc tmp/epi_endo.neubc
 
     python scripts/utilities/mesh_cli.py split --input tmp/epi_endo.surf \
-        --pts refined/mesh.pts --prefix epi_endo_cc
+        --pts refined/mesh.pts --prefix epi_endo_cc --neubc tmp/epi_endo.neubc
 """
 
 import argparse
@@ -310,7 +310,7 @@ def cmd_topology(args: argparse.Namespace) -> None:
 # ---------------------------------------------------------------------------
 
 def cmd_split(args: argparse.Namespace) -> None:
-    from pycemrg_model_creation.utilities.mesh import write_split_component
+    from pycemrg_model_creation.utilities.mesh import read_neubc, write_split_component
     from pycemrg_model_creation.utilities.topology import (
         analyse_surface_topology,
         split_surface_components,
@@ -331,11 +331,37 @@ def cmd_split(args: argparse.Namespace) -> None:
 
     print(report.summary())
 
-    if args.expect and report.n_components != args.expect:
+    # At least, not exactly: the pipeline's own check is
+    # `len(cc_parts) < EXPECTED_CC_COUNT`, and `keep_largest_n_components`
+    # discards the surplus. Edge adjacency routinely finds a few extra slivers
+    # of four or five triangles where a non-manifold edge shaves a flap off a
+    # real surface, and refusing those would reject a split the pipeline would
+    # have used.
+    if args.expect and report.n_components < args.expect:
         raise SystemExit(
-            f"Refusing to split: expected {args.expect} components, edge "
+            f"Refusing to split: need at least {args.expect} components, edge "
             f"adjacency finds {report.n_components}. The defect is not one this "
             f"can repair -- inspect the surface before going further."
+        )
+
+    tags = None
+    if args.neubc:
+        neubc_path = Path(args.neubc)
+        if not neubc_path.exists():
+            raise FileNotFoundError(f"neubc file not found: {neubc_path}")
+        rows = read_neubc(neubc_path)
+        if rows.shape[0] != triangles.shape[0]:
+            raise ValueError(
+                f"{neubc_path.name} has {rows.shape[0]} rows but the surface has "
+                f"{triangles.shape[0]} triangles; they do not describe each other."
+            )
+        tags = rows[:, 3]
+    else:
+        print(
+            "No --neubc given, so every triangle is tagged 1 and the elemTag "
+            "meshtool writes is lost.\nThat distinction is what shows the septum "
+            "inside the RV endocardium. Pass the\nmatching .neubc to keep it.",
+            file=sys.stderr,
         )
 
     directory = Path(args.output_dir) if args.output_dir else input_path.parent
@@ -344,10 +370,15 @@ def cmd_split(args: argparse.Namespace) -> None:
     print()
     for component in components:
         write_split_component(
-            component, points, triangles, write_vtk=not args.no_vtk
+            component, points, triangles, tags=tags, write_vtk=not args.no_vtk
         )
-        print(f"  {component.name}: {component.n_triangles} triangles, "
-              f"{len(component.vertices)} vertices")
+        summary = (f"  {component.name}: {component.n_triangles} triangles, "
+                   f"{len(component.vertices)} vertices")
+        if tags is not None:
+            counts = {int(t): int((tags[component.triangles] == t).sum())
+                      for t in np.unique(tags[component.triangles])}
+            summary += f", tags {counts}"
+        print(summary)
 
     overlaps = [(c, other, shared)
                 for c in components
@@ -510,6 +541,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="Base name for the parts, e.g. epi_endo_cc -> epi_endo_cc.part0.",
     )
     spl.add_argument(
+        "--neubc",
+        metavar="PATH",
+        help="Matching .neubc, whose tags are carried into each part's .elem and .vtk.",
+    )
+    spl.add_argument(
         "--output-dir",
         metavar="PATH",
         help="Where to write. (default: beside the input)",
@@ -518,7 +554,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--expect",
         type=int,
         metavar="N",
-        help="Refuse unless edge adjacency finds exactly N components.",
+        help="Refuse unless edge adjacency finds at least N components.",
     )
     spl.add_argument(
         "--no-vtk",
