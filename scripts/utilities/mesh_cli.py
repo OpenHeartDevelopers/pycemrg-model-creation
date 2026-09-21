@@ -3,7 +3,11 @@
 mesh_cli.py - Command-line utilities for CARP cardiac mesh analysis.
 
 Subcommands:
-    volumes  Compute total volume per element label.
+    volumes   Compute total volume per element label.
+    topology  Report the edge-adjacency topology of a surface, and the defects
+              that make `meshtool extract unreachable` disagree with it.
+    split     Write that edge-adjacency split as the .partN families the
+              pipeline reads back, in place of meshtool's.
 
 Examples:
     python scripts/utilities/mesh_cli.py volumes --input path/to/myocardium
@@ -13,6 +17,14 @@ Examples:
     python scripts/utilities/mesh_cli.py volumes --input path/to/mesh --total-only
     python scripts/utilities/mesh_cli.py volumes --input path/to/mesh --plain --show-header
     python scripts/utilities/mesh_cli.py volumes --input path/to/mesh --plain --total-only
+
+    python scripts/utilities/mesh_cli.py topology --input tmp/epi_endo.surfmesh.vtk
+    python scripts/utilities/mesh_cli.py topology --input tmp/epi_endo.surf --pts refined/mesh.pts
+    python scripts/utilities/mesh_cli.py topology --input tmp/epi_endo.surf --pts refined/mesh.pts \
+        --neubc tmp/epi_endo.neubc
+
+    python scripts/utilities/mesh_cli.py split --input tmp/epi_endo.surf \
+        --pts refined/mesh.pts --prefix epi_endo_cc
 """
 
 import argparse
@@ -183,6 +195,181 @@ def _print_plain(input_path, label_volumes, grand_total, input_unit, output_unit
         print(f"{input_path},{label_values},{grand_total:.6f},{input_unit},{output_unit}")
 
 
+
+# ---------------------------------------------------------------------------
+# Subcommand: topology
+# ---------------------------------------------------------------------------
+
+def _load_surface(input_path: Path, pts_path: Path = None):
+    """
+    Returns `(points, triangles)` from either a VTK surface or a CARP `.surf`.
+
+    The two differ in what they carry. A `.surf` is triangles alone, indexed
+    into its parent mesh, so it needs that mesh's `.pts`. A `.vtk` surface is
+    self-contained but its indices are its own, which is why only the `.surf`
+    route can produce index files the pipeline will accept.
+
+    Points may be `None` when a `.surf` is given without `--pts`: the topology
+    is still computable, only the diagnostic mesh is not.
+    """
+    if not input_path.exists():
+        raise FileNotFoundError(f"Surface not found: {input_path}")
+
+    if input_path.suffix.lower() == ".vtk":
+        mesh = pv.read(input_path)
+        if pv.CellType.TRIANGLE not in mesh.cells_dict:
+            raise ValueError(f"No triangles found in {input_path.name}")
+        return np.array(mesh.points), mesh.cells_dict[pv.CellType.TRIANGLE]
+
+    from pycemrg_model_creation.utilities.mesh import read_surf, read_pts
+
+    triangles = read_surf(input_path)
+    if pts_path is None:
+        return None, triangles
+
+    if not pts_path.exists():
+        raise FileNotFoundError(f"Points file not found: {pts_path}")
+    return read_pts(pts_path), triangles
+
+
+def cmd_topology(args: argparse.Namespace) -> None:
+    from pycemrg_model_creation.utilities.mesh import read_neubc, write_topology_vtk
+    from pycemrg_model_creation.utilities.topology import analyse_surface_topology
+
+    input_path = Path(args.input)
+    pts_path = Path(args.pts) if args.pts else None
+    points, triangles = _load_surface(input_path, pts_path)
+
+    report = analyse_surface_topology(triangles)
+
+    print(f"{input_path.name}: {triangles.shape[0]} triangles, "
+          f"{len(np.unique(triangles))} vertices")
+    print(report.summary())
+
+    tags = None
+    if args.neubc:
+        neubc_path = Path(args.neubc)
+        if not neubc_path.exists():
+            raise FileNotFoundError(f"neubc file not found: {neubc_path}")
+        rows = read_neubc(neubc_path)
+        if rows.shape[0] != triangles.shape[0]:
+            raise ValueError(
+                f"{neubc_path.name} has {rows.shape[0]} rows but the surface has "
+                f"{triangles.shape[0]} triangles; they do not describe each other."
+            )
+        tags = rows[:, 3]
+
+    print()
+    header = f"{'comp':>5} {'triangles':>10}"
+    if tags is not None:
+        header += "   tags"
+    print(header)
+    for component in range(report.n_components):
+        selected = report.triangle_component == component
+        line = f"{component:>5} {int(selected.sum()):>10}"
+        if tags is not None:
+            counts = {int(t): int((tags[selected] == t).sum())
+                      for t in np.unique(tags[selected])}
+            line += f"   {counts}"
+        print(line)
+
+    if report.pinch_vertices.size:
+        print(f"\n{len(report.pinch_vertices)} pinch vertices, touching "
+              f"{int(report.pinched_triangles(triangles).sum())} triangles.")
+        fans, counts = np.unique(report.pinch_fan_counts, return_counts=True)
+        for fan, count in zip(fans, counts):
+            print(f"  {count} vertices carrying {fan} fans")
+    if report.nonmanifold_edges.size:
+        print(f"\n{len(report.nonmanifold_edges)} non-manifold edges "
+              f"(shared by more than two triangles):")
+        for edge in report.nonmanifold_edges[:10]:
+            print(f"  {edge[0]} - {edge[1]}")
+
+    if args.no_vtk:
+        return
+    if points is None:
+        print("\nNo --pts given, so no diagnostic mesh was written.", file=sys.stderr)
+        return
+
+    output_path = Path(args.output) if args.output else Path(
+        f"{input_path.parent / input_path.name.rsplit('.', 1)[0]}_topology.vtk"
+    )
+    write_topology_vtk(points, triangles, report, output_path)
+    if tags is not None:
+        mesh = pv.read(output_path)
+        mesh.cell_data["elemTag"] = tags.astype(np.int8)
+        mesh.save(output_path, binary=False)
+    print(f"\nWrote {output_path}")
+    print("  colour by 'component' -> the proposed split")
+    print("  colour by 'pinch'     -> the defects")
+
+
+
+# ---------------------------------------------------------------------------
+# Subcommand: split
+# ---------------------------------------------------------------------------
+
+def cmd_split(args: argparse.Namespace) -> None:
+    from pycemrg_model_creation.utilities.mesh import write_split_component
+    from pycemrg_model_creation.utilities.topology import (
+        analyse_surface_topology,
+        split_surface_components,
+    )
+
+    input_path = Path(args.input)
+    if input_path.suffix.lower() == ".vtk":
+        raise ValueError(
+            "split needs a CARP .surf, not a .vtk. A .surf is indexed into its "
+            "parent mesh, which is the indexing the .nod and .eidx files must "
+            "use; a .vtk surface carries its own, and the index files would be "
+            "silently wrong. Use `topology` to inspect a .vtk."
+        )
+
+    pts_path = Path(args.pts)
+    points, triangles = _load_surface(input_path, pts_path)
+    report = analyse_surface_topology(triangles)
+
+    print(report.summary())
+
+    if args.expect and report.n_components != args.expect:
+        raise SystemExit(
+            f"Refusing to split: expected {args.expect} components, edge "
+            f"adjacency finds {report.n_components}. The defect is not one this "
+            f"can repair -- inspect the surface before going further."
+        )
+
+    components = split_surface_components(triangles, report, args.prefix)
+    directory = Path(args.output_dir) if args.output_dir else input_path.parent
+
+    print()
+    for component in components:
+        write_split_component(
+            component, points, triangles, directory, write_vtk=not args.no_vtk
+        )
+        print(f"  {component.name}: {component.n_triangles} triangles, "
+              f"{len(component.vertices)} vertices")
+
+    overlaps = [(c, other, shared)
+                for c in components
+                for other, shared in c.shared_with.items()
+                if c.name < components[other].name]
+    if overlaps:
+        print("\nShared vertices, where sheets pinch:")
+        for component, other, shared in overlaps:
+            print(f"  {component.name} n {components[other].name}: "
+                  f"{len(shared)} nodes")
+        print(
+            "\nThese nodes appear in both components' .vtx sets. That is only a "
+            "problem\nif both become mguvc boundary inputs: it reads base, lvendo, "
+            "rvendo and\nrvsept, and derives epi. Check which components these are "
+            "before relying\non the result.",
+            file=sys.stderr,
+        )
+
+    print(f"\nWrote {len(components)} components to {directory}")
+    print("Re-run the surface stage; find_numbered_parts will pick them up.")
+
+
 # ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------
@@ -253,6 +440,92 @@ def build_parser() -> argparse.ArgumentParser:
         help="Print a CSV header row (only used with --plain).",
     )
     vol.set_defaults(func=cmd_volumes)
+
+    topo = subparsers.add_parser(
+        "topology",
+        help="Report a surface's edge-adjacency components and topological defects.",
+        description=(
+            "Reads a surface under edge adjacency -- two triangles connect only "
+            "if they share an edge -- and names the defects that make "
+            "`meshtool extract unreachable`, which follows nodes, disagree. Use "
+            "it on any surface that came back with the wrong number of "
+            "components, or on one that merely looks suspicious."
+        ),
+    )
+    topo.add_argument(
+        "--input",
+        required=True,
+        metavar="PATH",
+        help="A .vtk surface (self-contained) or a CARP .surf file, extension included.",
+    )
+    topo.add_argument(
+        "--pts",
+        metavar="PATH",
+        help="Parent mesh .pts, required with a .surf input to write a diagnostic mesh.",
+    )
+    topo.add_argument(
+        "--neubc",
+        metavar="PATH",
+        help="Matching .neubc, to break each component down by element tag.",
+    )
+    topo.add_argument(
+        "--output",
+        metavar="PATH",
+        help="Diagnostic .vtk to write. (default: <input>_topology.vtk)",
+    )
+    topo.add_argument(
+        "--no-vtk",
+        action="store_true",
+        help="Report only; write nothing.",
+    )
+    topo.set_defaults(func=cmd_topology)
+
+    spl = subparsers.add_parser(
+        "split",
+        help="Write the edge-adjacency split as .partN families.",
+        description=(
+            "Writes each edge-adjacency component as the CARP submesh family "
+            "`meshtool extract unreachable` would have written, so the pipeline "
+            "reads them back with no change. Nothing is dropped: a vertex where "
+            "two sheets pinch belongs to both, and the overlap is reported "
+            "rather than resolved."
+        ),
+    )
+    spl.add_argument(
+        "--input",
+        required=True,
+        metavar="PATH",
+        help="The CARP .surf that was split, extension included.",
+    )
+    spl.add_argument(
+        "--pts",
+        required=True,
+        metavar="PATH",
+        help="Parent mesh .pts, whose indexing the .surf uses.",
+    )
+    spl.add_argument(
+        "--prefix",
+        required=True,
+        metavar="NAME",
+        help="Base name for the parts, e.g. epi_endo_cc -> epi_endo_cc.part0.",
+    )
+    spl.add_argument(
+        "--output-dir",
+        metavar="PATH",
+        help="Where to write. (default: beside the input)",
+    )
+    spl.add_argument(
+        "--expect",
+        type=int,
+        metavar="N",
+        help="Refuse unless edge adjacency finds exactly N components.",
+    )
+    spl.add_argument(
+        "--no-vtk",
+        action="store_true",
+        help="Skip the per-component .vtk.",
+    )
+    spl.set_defaults(func=cmd_split)
 
     return parser
 

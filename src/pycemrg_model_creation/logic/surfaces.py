@@ -33,6 +33,7 @@ from pycemrg_model_creation.utilities.mesh import ElemType
 
 import pycemrg_model_creation.utilities.mesh as mshu
 import pycemrg_model_creation.utilities.geometry as geom
+import pycemrg_model_creation.utilities.topology as topo
 
 
 class SurfaceExtractionError(Exception):
@@ -166,7 +167,12 @@ class SurfaceLogic:
             EXPECTED_CC_COUNT = 3
             if len(cc_parts) < EXPECTED_CC_COUNT:
                 raise SurfaceIdentificationError(
-                    f"Expected {EXPECTED_CC_COUNT} connected components, found {len(cc_parts)}"
+                    self._diagnose_component_failure(
+                        surface_stem=paths.epi_endo_combined,
+                        points_path=paths.mesh.pts,
+                        expected=EXPECTED_CC_COUNT,
+                        found=len(cc_parts),
+                    )
                 )
 
             cc_parts = mshu.keep_largest_n_components(
@@ -310,8 +316,24 @@ class SurfaceLogic:
                 base_prefix=paths.septum_cc_base.name,
             )
 
+            # Same exposure as the epi/endo split above, and until now it had no
+            # count check: a fused surface reached keep_largest_n_components and
+            # died there on a bare ValueError naming neither cause nor remedy.
+            EXPECTED_SEPTUM_CC_COUNT = 2
+            if len(cc_parts) < EXPECTED_SEPTUM_CC_COUNT:
+                raise SurfaceIdentificationError(
+                    self._diagnose_component_failure(
+                        surface_stem=paths.septum_raw,
+                        points_path=paths.mesh.pts,
+                        expected=EXPECTED_SEPTUM_CC_COUNT,
+                        found=len(cc_parts),
+                    )
+                )
+
             # Keep 2 largest (LV epi and septum)
-            cc_parts = mshu.keep_largest_n_components(cc_parts, paths.tmp_dir, keep_n=2)
+            cc_parts = mshu.keep_largest_n_components(
+                cc_parts, paths.tmp_dir, keep_n=EXPECTED_SEPTUM_CC_COUNT
+            )
 
             self.logger.info("Renaming septum connected components")
 
@@ -974,6 +996,68 @@ class SurfaceLogic:
         )
 
     # HELPER METHODS
+    def _diagnose_component_failure(
+        self,
+        surface_stem: Path,
+        points_path: Path,
+        *,
+        expected: int,
+        found: int,
+    ) -> str:
+        """
+        Explain a wrong component count, and leave a mesh behind to look at.
+
+        `meshtool extract unreachable` separates by *node* reachability, so two
+        sheets touching at a single vertex come back as one component. This
+        re-reads the same surface under edge adjacency, names the defects that
+        make the two answers differ, and writes a VTK carrying both as cell
+        data.
+
+        Diagnosis is best-effort and must never mask the failure it describes:
+        anything going wrong here is logged and the caller still raises.
+
+        Args:
+            surface_stem: Stem of the surface that was split, e.g.
+                `paths.epi_endo_combined`. The `.surf` read and the `_topology.vtk`
+                written are both derived from it, by appending rather than by
+                `with_suffix`, which would truncate a dotted stem.
+            points_path: The parent mesh `.pts`, whose indexing `.surf` uses.
+            expected: Components the caller needed.
+            found: Components `meshtool` returned.
+
+        Returns:
+            A message for `SurfaceIdentificationError`, whatever happens.
+        """
+        message = f"Expected {expected} connected components, found {found}."
+
+        surface_path = Path(f"{surface_stem}.surf")
+        diagnostic_path = Path(f"{surface_stem}_topology.vtk")
+
+        try:
+            surf = mshu.read_surf(surface_path)
+            report = topo.analyse_surface_topology(surf)
+
+            mshu.write_topology_vtk(
+                points=mshu.read_pts(points_path),
+                surf=surf,
+                topology=report,
+                output_path=diagnostic_path,
+            )
+
+            return (
+                f"{message}\n\n"
+                f"{report.summary()}\n\n"
+                f"Inspect: {diagnostic_path}\n"
+                f"  colour by 'pinch'     -> the defects\n"
+                f"  colour by 'component' -> the proposed split\n"
+                f"Accept with: scripts/utilities/split_pinched_surface.py"
+            )
+        except Exception as exc:  # noqa: BLE001 - the caller's error is the one that matters
+            self.logger.warning(
+                f"Could not diagnose the component failure on {surface_path}: {exc}"
+            )
+            return message
+
     def _prepare_directories(self, paths: VentricularSurfacePaths) -> None:
         """
         Create the directories the ventricular workflow writes into.

@@ -11,6 +11,7 @@ from enum import Enum
 
 from ..meshpaths import CarpMesh
 from .geometry import outward_normal_fraction
+from .topology import SurfaceTopology, SplitComponent
 
 logger = logging.getLogger(__name__)
 
@@ -809,3 +810,128 @@ def read_clipper(clipper_path: Path) -> Tuple[NDArray[np.float64], float]:
 
     return center, radius
 
+
+
+def write_topology_vtk(
+    points: NDArray[np.float64],
+    surf: NDArray[np.int_],
+    topology: SurfaceTopology,
+    output_path: Path,
+) -> None:
+    """
+    Write a surface as VTK, carrying its topology report as cell data.
+
+    This is the file a human opens when the component count comes out wrong.
+    Both arrays are **cell** data, not point data: a pinch is a property of a
+    vertex, but a vertex cannot be shaded on its own, so what gets coloured is
+    every triangle that touches one.
+
+    Colour by `component` to judge whether the proposed edge-adjacency split is
+    the right one, and by `pinch` to find the defects that caused the failure.
+
+    Args:
+        points: Coordinates of the parent mesh, as `read_pts` returns them.
+            Only the vertices `surf` refers to are written.
+        surf: Triangle connectivity, (n, 3), indexing into `points`.
+        topology: The report for that same `surf`.
+        output_path: Path to the output .vtk file, extension included.
+
+    Raises:
+        ValueError: If `topology` was built from a different surface.
+    """
+    if topology.n_triangles != surf.shape[0]:
+        raise ValueError(
+            f"Topology describes {topology.n_triangles} triangles but the "
+            f"surface has {surf.shape[0]}."
+        )
+
+    # Same reindex-then-PolyData shape as `surf2vtk`, which this deliberately
+    # does not call: that one reads its inputs from disk, and everything here
+    # is already in memory by the time a failure is being diagnosed.
+    unique_vertex_indices = surf2vtx(surf)
+    surface_points = points[unique_vertex_indices]
+
+    index_map = np.full(unique_vertex_indices.max() + 1, -1, dtype=int)
+    index_map[unique_vertex_indices] = np.arange(len(unique_vertex_indices))
+    cells = index_map[surf]
+
+    padding = np.full((cells.shape[0], 1), 3)
+    mesh = pv.PolyData(surface_points, faces=np.hstack((padding, cells)).flatten())
+
+    mesh.cell_data["component"] = topology.triangle_component
+    mesh.cell_data["pinch"] = topology.pinched_triangles(surf).astype(np.int8)
+
+    mesh.save(output_path, binary=False)
+    logger.info(
+        f"Wrote topology diagnostic to {output_path} "
+        f"({topology.n_components} components, "
+        f"{len(topology.pinch_vertices)} pinch vertices)"
+    )
+
+
+def write_split_component(
+    component: SplitComponent,
+    points: NDArray[np.float64],
+    surf: NDArray[np.int_],
+    directory: Path,
+    write_vtk: bool = True,
+) -> None:
+    """
+    Write one component as the CARP submesh family `meshtool` would have left.
+
+    The four files are what the pipeline reads back, and each is already implied
+    by the component's triangle list:
+
+    * ``.eidx`` -- rows of the parent ``.surf`` this component holds. This is
+      what `connected_component_to_surface` indexes with.
+    * ``.nod``  -- positions into ``surf2vtx(surf)``, not parent vertex indices.
+      The same function maps them back, so the indirection has to match.
+    * ``.elem`` -- the triangles, reindexed to the component's own vertices.
+    * ``.pts``  -- those vertices' coordinates.
+
+    ``.eidx`` and ``.nod`` are binary, written at the width `read_nod_eidx`
+    reads them.
+
+    Args:
+        component: The component to write, from `split_surface_components`.
+        points: Parent mesh coordinates.
+        surf: The parent surface the component indexes into.
+        directory: Where the files go.
+        write_vtk: Also write a `.vtk`, for looking at.
+    """
+    base = directory / component.name
+
+    subsurf = surf[component.triangles]
+
+    # Local reindexing, the same lookup-table trick as `surf2vtk`.
+    index_map = np.full(component.vertices.max() + 1, -1, dtype=int)
+    index_map[component.vertices] = np.arange(len(component.vertices))
+    local = index_map[subsurf]
+
+    write_pts(points[component.vertices], Path(f"{base}.pts"))
+    write_elem(
+        local,
+        np.ones(local.shape[0], dtype=int),
+        Path(f"{base}.elem"),
+        elem_type=ElemType.Tr,
+    )
+
+    # `.nod` is relative to the whole surface's vertex list, not to the parent
+    # mesh: `connected_component_to_surface` does `surf2vtx(surf)[nod]`.
+    all_vertices = surf2vtx(surf)
+    nod = np.searchsorted(all_vertices, component.vertices)
+    nod.astype(np.int64).tofile(Path(f"{base}.nod"))
+    component.triangles.astype(np.int64).tofile(Path(f"{base}.eidx"))
+
+    if write_vtk:
+        padding = np.full((local.shape[0], 1), 3)
+        mesh = pv.PolyData(
+            points[component.vertices],
+            faces=np.hstack((padding, local)).flatten(),
+        )
+        mesh.save(Path(f"{base}.vtk"), binary=False)
+
+    logger.info(
+        f"Wrote {component.name}: {component.n_triangles} triangles, "
+        f"{len(component.vertices)} vertices"
+    )
