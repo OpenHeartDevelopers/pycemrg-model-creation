@@ -39,6 +39,9 @@ import numpy as np
 
 from dataclasses import dataclass
 from numpy.typing import NDArray
+from pathlib import Path
+
+from ..meshpaths import CarpMesh
 
 logger = logging.getLogger(__name__)
 
@@ -285,8 +288,13 @@ class SplitComponent:
     """
     One edge-adjacency component, written out as `meshtool` would have written it.
 
+    The component is addressed by a `CarpMesh` rather than a name, for the same
+    reason `SubmeshParts` holds handles: a component's name and its directory
+    must not travel separately. Everything written for it is asked of the
+    handle, so the destination cannot disagree with what the part is called.
+
     Attributes:
-        name: Base name on disk, e.g. `epi_endo_cc.part0`.
+        mesh: Handle for this part, e.g. `CarpMesh(".../epi_endo_cc.part0")`.
         triangles: Rows of the parent surface this component holds, which is
             also the content of its `.eidx`.
         vertices: The parent-surface vertices it uses, ascending.
@@ -294,10 +302,15 @@ class SplitComponent:
             the shared vertices. Empty on a clean surface.
     """
 
-    name: str
+    mesh: CarpMesh
     triangles: NDArray[np.int_]
     vertices: NDArray[np.int_]
     shared_with: dict
+
+    @property
+    def name(self) -> str:
+        """The part's base name, e.g. `epi_endo_cc.part0`."""
+        return self.mesh.name
 
     @property
     def n_triangles(self) -> int:
@@ -305,7 +318,7 @@ class SplitComponent:
 
 
 def split_surface_components(
-    surf: NDArray[np.int_], topology: SurfaceTopology, base_prefix: str
+    surf: NDArray[np.int_], topology: SurfaceTopology, base: Path
 ) -> list:
     """
     Describe each component as the files `find_numbered_parts` expects.
@@ -325,8 +338,9 @@ def split_surface_components(
     Args:
         surf: The parent surface, (n, 3).
         topology: Its report, from `analyse_surface_topology`.
-        base_prefix: Stem the parts hang off, e.g. `epi_endo_cc`. The names
-            produced are `{base_prefix}.part{N}`, largest component first.
+        base: Stem the parts hang off, directory included, e.g.
+            `tmp_dir / "epi_endo_cc"`. The handles produced are
+            `{base}.part{N}`, largest component first.
 
     Returns:
         A list of `SplitComponent`, in component-label order.
@@ -348,7 +362,7 @@ def split_surface_components(
 
         components.append(
             SplitComponent(
-                name=f"{base_prefix}.part{k}",
+                mesh=CarpMesh(f"{base}.part{k}"),
                 triangles=np.where(topology.triangle_component == k)[0],
                 vertices=vertices,
                 shared_with=shared,

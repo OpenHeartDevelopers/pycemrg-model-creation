@@ -338,13 +338,13 @@ def cmd_split(args: argparse.Namespace) -> None:
             f"can repair -- inspect the surface before going further."
         )
 
-    components = split_surface_components(triangles, report, args.prefix)
     directory = Path(args.output_dir) if args.output_dir else input_path.parent
+    components = split_surface_components(triangles, report, directory / args.prefix)
 
     print()
     for component in components:
         write_split_component(
-            component, points, triangles, directory, write_vtk=not args.no_vtk
+            component, points, triangles, write_vtk=not args.no_vtk
         )
         print(f"  {component.name}: {component.n_triangles} triangles, "
               f"{len(component.vertices)} vertices")

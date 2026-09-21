@@ -17,12 +17,14 @@ routinely emit it silently truncates::
     CarpMesh("biv.base").vtx               -> biv.base.vtx # intended
 
 These handles hold no state beyond the stem and never touch the file
-system. Existence checks belong to the caller.
+system. Existence checks belong to the caller. ``SubmeshParts`` at the end
+is the one collection here: a set of handles a discovery step found, held
+together so a component's name and its directory cannot travel apart.
 """
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import ClassVar
+from typing import ClassVar, Iterator
 
 
 @dataclass(frozen=True)
@@ -366,3 +368,69 @@ class CarpSurface(_StemHandle):
     def surfmesh(self) -> SurfaceMesh:
         """The ``.surfmesh`` companion family, as its own handle."""
         return SurfaceMesh(self._sibling(".surfmesh"))
+
+
+@dataclass(frozen=True)
+class SubmeshParts:
+    """
+    The set of submeshes a discovery step found on disk, as handles.
+
+    ``meshtool extract unreachable`` splits a surface into however many
+    connected components it happens to have and writes them as
+    ``<base>.part0``, ``<base>.part1``, ... The arity is a property of the
+    data, not of the invocation, so the names can only be learned by looking.
+    This type is what that looking returns.
+
+    Deliberately **not** a ``_StemHandle``. A collection has no single stem, so
+    it could not answer ``name``, ``directory`` or ``_sibling`` honestly, and
+    the base's governing rule is that it carries only what every handle can
+    answer from its stem alone.
+
+    Equally deliberately **not** ``.partN``-specific. ``.partN`` is one source
+    of a set of submeshes, not the definition of one — the same reasoning that
+    keeps :class:`SubmeshIndex` from being "the ``.partN`` class".
+
+    It exists to stop a component's name and its directory travelling
+    separately. ``find_numbered_parts`` used to hand back bare strings, leaving
+    every consumer to re-join the directory and re-wrap as a ``CarpMesh``;
+    holding resolved handles says the name and its location once.
+
+    This type is the *discovered*-outputs mechanism. Names computable in
+    advance belong to ``tools.mguvc.outputs_for``, which is the *predicted*
+    one. They are different mechanisms and are not to be unified.
+
+    Members may be given as ``CarpMesh``, ``Path`` or ``str``; all are stored
+    as ``CarpMesh``. Like every handle here, this touches no file system —
+    construction asserts nothing about what exists.
+
+    Example:
+        >>> parts = SubmeshParts([Path("/tmp/epi_endo_cc.part0")])
+        >>> len(parts)
+        1
+        >>> parts[0].elem
+        PosixPath('/tmp/epi_endo_cc.part0.elem')
+    """
+
+    parts: tuple[CarpMesh, ...]
+
+    def __post_init__(self) -> None:
+        # Accept any mix of handles, Paths and strs for convenience, but store
+        # a tuple of CarpMesh. object.__setattr__ is how a frozen dataclass
+        # normalises its fields.
+        object.__setattr__(
+            self,
+            "parts",
+            tuple(
+                part if isinstance(part, CarpMesh) else CarpMesh(part)
+                for part in self.parts
+            ),
+        )
+
+    def __len__(self) -> int:
+        return len(self.parts)
+
+    def __iter__(self) -> Iterator[CarpMesh]:
+        return iter(self.parts)
+
+    def __getitem__(self, index: int) -> CarpMesh:
+        return self.parts[index]

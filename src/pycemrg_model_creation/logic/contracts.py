@@ -440,3 +440,33 @@ class VentricularUVCPaths:
     # beside the mesh so that output_dir is not created early.
     etags_file: Path
 
+
+@dataclass(frozen=True)
+class VentricularFibrePaths:
+    """
+    Path contract for ventricular (BiV) rule-based fibre generation.
+
+    Two fields, because two is how many choices GlRuleFibres actually leaves
+    the caller: which mesh, and where mguvc wrote the Laplace solutions the
+    fibre rule needs. Everything else is asked for rather than stored:
+
+    - the four Laplace inputs — ``tools.mguvc.outputs_for(biv_mesh,
+      uvc_output_dir).laplace_solutions``
+    - the fibre output — ``biv_mesh.lon``, already a ``CarpMesh`` family
+      member
+
+    ``fibre_type`` and the fibre angles are workflow parameters, not paths,
+    and are arguments to ``FibreLogic.run_ventricular_fibre_generation``
+    rather than fields here — the same treatment ``VentricularUVCPaths``
+    gives ``lv_tag``/``rv_tag``.
+    """
+
+    # Input: BiV submesh GlRuleFibres runs on. Its .lon is overwritten with
+    # the generated fibres, replacing mguvc's fabricated [1 0 0] default.
+    biv_mesh: CarpMesh
+
+    # Input: the mguvc output directory from the UVC run that produced this
+    # mesh's Laplace solutions. Not derivable from `biv_mesh` alone — the UVC
+    # output directory is a caller choice (see `VentricularUVCPaths.output_dir`).
+    uvc_output_dir: Path
+

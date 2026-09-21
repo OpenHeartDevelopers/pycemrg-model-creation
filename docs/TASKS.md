@@ -20,31 +20,61 @@ this repo.
     -   [X] Create the `UvcLogic` class in a new `logic/uvc.py` file, initialized with a `CarpWrapper`.
     -   [X] Implement the `run_ventricular_uvc_calculation` method within `UvcLogic`.
     -   [X] Create a new integration test, `test_uvc_logic_ventricular.py`, to validate the full UVC generation process.
--   [ ] Resolve the `mguvc` VTX naming conflict: `build_ventricular_uvc_paths` emits
-        `{basename}.base.vtx` and `UvcLogic._validate_inputs` requires it, but the UVC test and
-        debug script copy the plain `base.vtx` names that `mguvc` itself reads.
--   [ ] Fix `SurfaceLogic.run_all`: it still passes `tags` to `run_ventricular_extraction` and
-        `run_atrial_extraction`, which dropped that parameter when tag lookup moved to the
-        injected `LabelManager`. Any call raises `TypeError`.
--   [ ] Fix `MeshtoolWrapper.map`: its debug log calls `f.name` on each entry, but callers pass
-        `str`. Also `insert_meshdata`, annotated `MeshDataOperation` but membership-tested against
-        string keys, so passing the enum raises `ValueError`.
+-   [X] Resolve the `mguvc` VTX naming conflict. **Resolved, and the original premise was
+        wrong.** `mguvc` reads the *stem-prefixed* `<stem>.<role>.vtx`, not a plain
+        `base.vtx` — established by experiment, see `.claude/evidence_mguvc_reads_surf.md`.
+        `tools/mguvc.py:boundary_inputs` is now the single source of those names, used by
+        both the builder and `UvcLogic._validate_inputs`, so the two cannot drift.
+-   [X] Fix `SurfaceLogic.run_all`. It is now a deliberate `NotImplementedError` stub
+        (`logic/surfaces.py:944-976`) whose docstring names the supported route: drive the
+        per-phase methods directly. `run_ventricular_extraction(paths)` takes `paths` alone.
+        Rebuild a whole-workflow entry point once the contract refactor settles the phase
+        signatures — not before.
+-   [X] Fix `MeshtoolWrapper.map`. Fixed at `ecb7e5f`: the debug line and the join now agree
+        on the argument type (`wrappers.py:702,709`).
+-   [ ] Fix `MeshtoolWrapper.insert_meshdata`: it is annotated `operation: MeshDataOperation`
+        but membership-tests against the string keys of `op_dict`
+        (`wrappers.py:670-674`), so passing the enum the signature asks for always raises
+        `ValueError`. Every correct call fails; no caller exists yet.
 
 ### Core Feature Development
 
--   [ ] **Implement Ventricular Fibre Generation Workflow:**
+-   [X] **Implement Ventricular Fibre Generation Workflow:**
 
-    > **Unblocked.** `utilities/linalg.py` supplies `rotation_matrix` (sheet
-    > orthogonalisation), `create_csys` and `normalise_vectors`; `utilities/mesh.py`
-    > supplies `write_lon` and `write_elem`. No new primitives needed.
+    > **Done.** `VentricularFibrePaths` (2 fields: `biv_mesh`, `uvc_output_dir`) and
+    > `FibreLogic.run_ventricular_fibre_generation` landed, driving the existing
+    > `CarpWrapper.gl_rule_fibres`. `gl_rule_fibres` builds its argv as a real list, so it
+    > shares neither of this module's two argv defects (`ekbatch`, `gl_elem_centers`),
+    > both untouched here and both listed below. Unit-covered (`tests/test_fibre_logic.py`,
+    > `tests/test_contracts_ventricular.py`), integration-covered
+    > (`tests/integration/test_fibre_logic_ventricular.py`, self-contained: runs UVC first
+    > to produce real Laplace solutions, then fibres, asserting non-default unit-length
+    > fibre vectors). Collects and skips cleanly on a machine without `mguvc`/`GlRuleFibres`;
+    > not yet run to completion on the workstation.
 
-    -   [ ] Define a `VentricularFibrePaths` contract.
-    -   [ ] Create a `FibreLogic` class.
-    -   [ ] Implement a `run_fibre_generation` method that utilizes the existing `CarpWrapper.gl_rule_fibres` method.
-    -   [ ] Create an integration test to validate fibre file (`.lon`) creation.
-    -   [ ] Before building on `gl_elem_centers`, fix `CarpWrapper`'s argv packing —
-            `wrappers.py:221` does `cmd += f" --tagfile {tagfile}"` on a **list**, extending
-            it character by character.
+    -   [X] Define a `VentricularFibrePaths` contract.
+    -   [X] Create a `FibreLogic` class.
+    -   [X] Implement a `run_fibre_generation` method that utilizes the existing `CarpWrapper.gl_rule_fibres` method.
+    -   [X] Create an integration test to validate fibre file (`.lon`) creation.
+    -   [X] Before building on `gl_elem_centers`, fix its argv packing. **Done** —
+            `-f`/`-p` and their values are separate argv elements now, and
+            `tests/test_tools.py` (the wrappers' first unit coverage) pins it, including a
+            general check that no argv element of any wrapped command contains a space.
+    -   [X] **Port `correct_fibres`.** `utilities.mesh.correct_degenerate_fibres` is the
+            pure transform and `FibreLogic.correct_ventricular_fibres` the step that runs
+            `GlElemCenters`, reads back, and overwrites the mesh's `.lon`. Deliberately
+            **not** called by `run_ventricular_fibre_generation` — heartbuilder sequences
+            fibres, centres, correction as three steps and `cemrg-bivbuilder` asked to drive
+            the correction itself. Two reference quirks kept on purpose (degeneracy is
+            `|f_z| < 1e-6`, not a norm; the neighbour search ignores tags, so an LV element
+            can inherit an RV fibre) and one upstream defect **not** ported (its tie
+            resolution returns several indices and the row assignment raises; ours takes the
+            first). Source: `.claude/evidence_tagsconfig_150926.md`. **Not yet run against
+            real binaries.**
+    -   [ ] Fix `ekbatch`'s argv packing, a separate defect at `wrappers.py:220-221`:
+            `cmd += f" --tagfile {tagfile}"` on a **list** extends it character by character.
+            Earlier revisions of this file attributed this line to `gl_elem_centers`; it is
+            `ekbatch`.
 
 -   [ ] **Implement Open-Source FEM Laplace Solver for Ventricular UVCs:**
 

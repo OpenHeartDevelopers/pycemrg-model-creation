@@ -11,8 +11,9 @@ from pycemrg_model_creation.logic.contracts import (
     AtrialSurfacePaths,
     BiVMeshPaths,
     AtrialMeshPaths,
-    UVCSurfaceExtractionPaths, 
+    UVCSurfaceExtractionPaths,
     VentricularUVCPaths,
+    VentricularFibrePaths,
 )
 
 from pycemrg_model_creation.logic.builders import (
@@ -23,12 +24,14 @@ from pycemrg_model_creation.logic.builders import (
 from pycemrg_model_creation.logic.surfaces import SurfaceLogic
 from pycemrg_model_creation.logic.refinement import RefinementLogic
 from pycemrg_model_creation.logic.uvc import UvcLogic
+from pycemrg_model_creation.logic.fibres import FibreLogic
 
 __all__ = [
     # Logic classes
     "SurfaceLogic",
     "RefinementLogic",
     "UvcLogic",
+    "FibreLogic",
     # Path contracts
     "MeshPostprocessingPaths",
     "VentricularSurfacePaths",
@@ -37,6 +40,7 @@ __all__ = [
     "AtrialMeshPaths",
     "UVCSurfaceExtractionPaths",
     "VentricularUVCPaths",
+    "VentricularFibrePaths",
     # Path builders
     "RefinementPathBuilder",
     "ModelCreationPathBuilder",

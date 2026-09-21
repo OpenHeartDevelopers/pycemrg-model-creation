@@ -31,7 +31,7 @@ class CarpWrapper:
     """
     A high-level SDK for common CARPentry command-line tools.
 
-    This class provides Pythonic wrappers around tools like GlRuleFibres,
+    This class provides Pythonic wrappers around tools like GlRuleFibers,
     GlVTKConvert, and igbextract, abstracting away the command-line details.
     """
 
@@ -58,7 +58,7 @@ class CarpWrapper:
         fibre_type: str = "biv",
     ) -> None:
         """
-        Wrapper for the GlRuleFibres command.
+        Wrapper for the GlRuleFibers command (note the American spelling).
 
         Args:
             mesh_name: Path to the input mesh.
@@ -74,8 +74,11 @@ class CarpWrapper:
         angles_to_use = angles if angles is not None else DEFAULT_FIBRE_ANGLES
 
         self.logger.info(f"Generating rule-based fibres for {mesh_name.name}")
+        # The binary is spelled the American way, GlRuleFibers, while every
+        # name in this library uses "fibre". They differ on purpose; the
+        # reference pipeline cemrg-heartbuilder has the same split.
         cmd = [
-            "GlRuleFibres",
+            "GlRuleFibers",
             "-m",
             mesh_name,
             "-t",
@@ -160,7 +163,11 @@ class CarpWrapper:
         self, meshname: Path, output: Path, fmt: str = "0", pstrat: str = "0"
     ) -> None:
         """
-        Wrapper for the GlElemCenters command.
+        Wrapper for the GlElemCenters command (note the American spelling).
+
+        Writes one ASCII CARP `.pts`: a count line, then one `x y z` centre
+        per element, in element order. `correct_fibres` reads it back to
+        measure distances between elements, so the ordering is load-bearing.
 
         Args:
             meshname: Path to the input mesh.
@@ -169,12 +176,17 @@ class CarpWrapper:
             pstrat: Partitioning strategy (default is '0').
         """
         self.logger.info(f"Calculating element centers for {meshname.name}")
+        # Each flag and its value are separate argv elements. They used to be
+        # glued into one token each -- "-f 0" rather than "-f", "0" -- which
+        # reaches the binary as a single unrecognised argument.
         cmd = [
             "GlElemCenters",
             "-m",
             meshname,
-            f"-f {fmt}",
-            f"-p {pstrat}",
+            "-f",
+            fmt,
+            "-p",
+            pstrat,
             "-o",
             output,
         ]

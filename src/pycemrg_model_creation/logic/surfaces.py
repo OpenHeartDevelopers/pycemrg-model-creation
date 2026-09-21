@@ -18,7 +18,6 @@ import numpy as np
 
 from pycemrg.data.labels import LabelManager
 
-from pycemrg_model_creation.config import TagsConfig
 from pycemrg_model_creation.logic.contracts import (
     VentricularSurfacePaths,
     AtrialSurfacePaths,
@@ -135,10 +134,14 @@ class SurfaceLogic:
 
             # Step 1: Extract combined epi/endo surface
             ventricle_tags = self.labels.get_tags_string(["LV", "RV"])
-            valve_tags = self.labels.get_tags_string(["MV", "TV", "AV", "PV"])
+            # The pulmonary artery is excluded alongside the valve planes;
+            # cemrg-heartbuilder does the same (meshtools_utils.py:651).
+            exclude_tags = self.labels.get_tags_string(
+                ["MV", "TV", "AV", "PV", "PArt"]
+            )
 
-            # Surface excluding valve openings
-            op_tag = f"{ventricle_tags}-{valve_tags}"
+            # Surface excluding valve openings and the pulmonary artery
+            op_tag = f"{ventricle_tags}-{exclude_tags}"
 
             self.meshtool.extract_surface(
                 input_mesh_path=paths.mesh.stem,
@@ -176,22 +179,21 @@ class SurfaceLogic:
                 )
 
             cc_parts = mshu.keep_largest_n_components(
-                component_names=cc_parts,
-                directory=paths.tmp_dir,
+                cc_parts,
                 keep_n=EXPECTED_CC_COUNT,
                 delete_smaller=True,
             )
 
             # Step 4: Identify which surface is which
             surfaces_data = []
-            for cc_name in cc_parts:
-                cc_path = paths.tmp_dir / cc_name
+            for component in cc_parts:
+                # Stems at the utility boundary: read_carp_mesh takes a Path.
                 pts, surf = mshu.read_carp_mesh(
-                    cc_path, elem_type=ElemType.Tr, read_tags=False
+                    component.stem, elem_type=ElemType.Tr, read_tags=False
                 )
                 cog = geom.compute_surface_center_of_gravity(pts)
                 surfaces_data.append(
-                    {"name": cc_name, "pts": pts, "surf": surf, "cog": cog}
+                    {"name": component.name, "pts": pts, "surf": surf, "cog": cog}
                 )
 
             # Step 5: Get LV blood pool center for distance calculations
@@ -232,9 +234,9 @@ class SurfaceLogic:
                         rv_endo_idx = endo_indices[0]
 
                     self.logger.info(
-                        f"Identified: EPI={cc_parts[epi_idx]}, "
-                        f"LV_ENDO={cc_parts[lv_endo_idx]}, "
-                        f"RV_ENDO={cc_parts[rv_endo_idx]}"
+                        f"Identified: EPI={cc_parts[epi_idx].name}, "
+                        f"LV_ENDO={cc_parts[lv_endo_idx].name}, "
+                        f"RV_ENDO={cc_parts[rv_endo_idx].name}"
                     )
                     break
 
@@ -245,17 +247,17 @@ class SurfaceLogic:
 
             # Step 7: Rename files to final output paths
             self._copy_mesh_family(
-                CarpMesh(paths.tmp_dir / cc_parts[epi_idx]),  # epicardium
+                cc_parts[epi_idx],  # epicardium
                 CarpMesh(paths.epi_surface),
                 with_vtk=True,
             )
             self._copy_mesh_family(
-                CarpMesh(paths.tmp_dir / cc_parts[lv_endo_idx]),  # lv_endocardium
+                cc_parts[lv_endo_idx],  # lv_endocardium
                 CarpMesh(paths.lv_endo_surface),
                 with_vtk=True,
             )
             self._copy_mesh_family(
-                CarpMesh(paths.tmp_dir / cc_parts[rv_endo_idx]),  # rv_endocardium
+                cc_parts[rv_endo_idx],  # rv_endocardium
                 CarpMesh(paths.rv_endo_surface),
                 with_vtk=True,
             )
@@ -287,7 +289,7 @@ class SurfaceLogic:
 
             # Extract LV surface, excluding RV, RA, and pulmonary artery
             lv_tags = self.labels.get_tags_string(["LV"])
-            exclude_tags = self.labels.get_tags_string(["RV", "RA"])
+            exclude_tags = self.labels.get_tags_string(["RV", "RA", "PArt"])
 
             op_tag = f"{lv_tags}-{exclude_tags}"
 
@@ -332,18 +334,18 @@ class SurfaceLogic:
 
             # Keep 2 largest (LV epi and septum)
             cc_parts = mshu.keep_largest_n_components(
-                cc_parts, paths.tmp_dir, keep_n=EXPECTED_SEPTUM_CC_COUNT
+                cc_parts, keep_n=EXPECTED_SEPTUM_CC_COUNT
             )
 
             self.logger.info("Renaming septum connected components")
 
             # First is LV epi (intermediate), second is actual septum
             self._copy_mesh_family(
-                CarpMesh(paths.tmp_dir / cc_parts[0]),
+                cc_parts[0],
                 CarpMesh(paths.lv_epi_intermediate),
             )
             self._copy_mesh_family(
-                CarpMesh(paths.tmp_dir / cc_parts[1]),
+                cc_parts[1],
                 CarpMesh(paths.septum_surface),
             )
 
@@ -679,13 +681,15 @@ class SurfaceLogic:
 
     # SUBMESH EXTRACTION AND MAPPING
 
-    def extract_biv_submesh(self, paths: BiVMeshPaths, tags: TagsConfig) -> None:
+    def extract_biv_submesh(self, paths: BiVMeshPaths) -> None:
         """
         Extract biventricular (BiV) submesh from four-chamber mesh.
 
+        Tags come from the injected `LabelManager`, as they do everywhere else
+        in this class.
+
         Args:
             paths: BiV mesh paths contract
-            tags: Tag configuration
 
         Raises:
             SurfaceExtractionError: If extraction fails
@@ -693,7 +697,7 @@ class SurfaceLogic:
         try:
             self.logger.info("Extracting BiV submesh")
 
-            biv_tags = tags.get_tags_list(["LV", "RV"])
+            biv_tags = self.labels.get_values_from_names(["LV", "RV"])
 
             self.meshtool.extract_mesh(
                 input_mesh_path=paths.source_mesh,
@@ -766,14 +770,16 @@ class SurfaceLogic:
             self.logger.debug(f"Renamed {mapped.name} -> {target.name}")
 
     def extract_atrial_submesh(
-        self, paths: AtrialMeshPaths, tags: TagsConfig, chamber: Chamber
+        self, paths: AtrialMeshPaths, chamber: Chamber
     ) -> None:
         """
         Extract atrial submesh (LA or RA) from four-chamber mesh.
 
+        Tags come from the injected `LabelManager`, as they do everywhere else
+        in this class.
+
         Args:
             paths: Atrial mesh paths contract
-            tags: Tag configuration
             chamber: Chamber.LA or Chamber.RA
 
         Raises:
@@ -782,7 +788,7 @@ class SurfaceLogic:
         try:
             self.logger.info(f"Extracting {chamber.value} submesh")
 
-            atrial_tags = tags.get_tags_list([chamber.value])
+            atrial_tags = self.labels.get_values_from_names([chamber.value])
 
             self.meshtool.extract_mesh(
                 input_mesh_path=paths.source_mesh,
@@ -916,13 +922,12 @@ class SurfaceLogic:
         self.logger.info(f"{chamber.value} EXTRACTION COMPLETE")
         self.logger.info("=" * 60)
 
-    def run_biv_mesh_extraction(self, paths: BiVMeshPaths, tags: TagsConfig) -> None:
+    def run_biv_mesh_extraction(self, paths: BiVMeshPaths) -> None:
         """
         Run BiV submesh extraction and VTX mapping workflow.
 
         Args:
             paths: BiV mesh paths contract
-            tags: Tag configuration
 
         Raises:
             SurfaceExtractionError: If any step fails
@@ -931,7 +936,7 @@ class SurfaceLogic:
         self.logger.info("STARTING BIV MESH EXTRACTION WORKFLOW")
         self.logger.info("=" * 60)
 
-        self.extract_biv_submesh(paths, tags)
+        self.extract_biv_submesh(paths)
         self.map_vtx_to_submesh(paths)
 
         self.logger.info("=" * 60)
@@ -939,14 +944,13 @@ class SurfaceLogic:
         self.logger.info("=" * 60)
 
     def run_atrial_mesh_extraction(
-        self, paths: AtrialMeshPaths, tags: TagsConfig, chamber: Chamber
+        self, paths: AtrialMeshPaths, chamber: Chamber
     ) -> None:
         """
         Run atrial submesh extraction and VTX mapping workflow.
 
         Args:
             paths: Atrial mesh paths contract
-            tags: Tag configuration
             chamber: Chamber.LA or Chamber.RA
 
         Raises:
@@ -956,7 +960,7 @@ class SurfaceLogic:
         self.logger.info(f"STARTING {chamber.value} MESH EXTRACTION WORKFLOW")
         self.logger.info("=" * 60)
 
-        self.extract_atrial_submesh(paths, tags, chamber)
+        self.extract_atrial_submesh(paths, chamber)
         self.map_vtx_to_atrial_submesh(paths, chamber)
 
         self.logger.info("=" * 60)
@@ -966,7 +970,6 @@ class SurfaceLogic:
     def run_all(
         self,
         paths: UVCSurfaceExtractionPaths,
-        tags: TagsConfig,
         ventricular_files_to_map: Optional[List[Path]] = None,
         la_files_to_map: Optional[List[Path]] = None,
         ra_files_to_map: Optional[List[Path]] = None,
