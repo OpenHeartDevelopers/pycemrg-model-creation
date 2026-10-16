@@ -88,6 +88,23 @@ class TestTheMessage:
         assert "colour by 'pinch'" in message
         assert "colour by 'component'" in message
 
+    def test_it_gives_the_command_that_accepts_the_split(
+        self, logic, pinched_surface, tmp_path
+    ):
+        message = logic._diagnose_component_failure(
+            surface_stem=pinched_surface,
+            points_path=tmp_path / "mesh.pts",
+            expected=3,
+            found=1,
+            split_base=tmp_path / "epi_endo_cc",
+        )
+
+        assert "scripts/utilities/mesh_cli.py split" in message
+        assert f"--input {tmp_path / 'epi_endo.surf'}" in message
+        assert f"--prefix epi_endo_cc --output-dir {tmp_path}" in message
+        assert f"--neubc {tmp_path / 'epi_endo.neubc'}" in message
+        assert "split_pinched_surface" not in message
+
 
 class TestTheDiagnosticFile:
     def test_it_is_written_beside_the_surface(

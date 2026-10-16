@@ -153,30 +153,14 @@ class SurfaceLogic:
             # Step 2: Extract connected components (should be 3: epi, LV endo, RV endo)
             self.logger.info("Extracting connected components")
 
-            for output_ext in ["vtk", "carp_txt"]:
-                self.meshtool.extract_unreachable(
-                    # The .surfmesh companion of the extracted surface. Asked of
-                    # the handle: with_suffix would truncate any dotted stem.
-                    input_mesh_path=CarpSurface(paths.epi_endo_combined).surfmesh.stem,
-                    submsh_path=paths.epi_endo_cc_base,
-                    ofmt=output_ext,
-                    ifmt="vtk",
-                )
-
-            cc_parts = mshu.find_numbered_parts(
-                directory=paths.tmp_dir, base_prefix=paths.epi_endo_cc_base.name
-            )
-
             EXPECTED_CC_COUNT = 3
-            if len(cc_parts) < EXPECTED_CC_COUNT:
-                raise SurfaceIdentificationError(
-                    self._diagnose_component_failure(
-                        surface_stem=paths.epi_endo_combined,
-                        points_path=paths.mesh.pts,
-                        expected=EXPECTED_CC_COUNT,
-                        found=len(cc_parts),
-                    )
-                )
+            split_base = paths.epi_endo_cc_base
+            cc_parts, roles = self._connected_components(
+                surface_stem=paths.epi_endo_combined,
+                split_base=split_base,
+                points_path=paths.mesh.pts,
+                expected=EXPECTED_CC_COUNT,
+            )
 
             cc_parts = mshu.keep_largest_n_components(
                 cc_parts,
@@ -184,66 +168,79 @@ class SurfaceLogic:
                 delete_smaller=True,
             )
 
-            # Step 4: Identify which surface is which
-            surfaces_data = []
-            for component in cc_parts:
-                # Stems at the utility boundary: read_carp_mesh takes a Path.
-                pts, surf = mshu.read_carp_mesh(
-                    component.stem, elem_type=ElemType.Tr, read_tags=False
+            if roles is not None:
+                # Hand-made roles replace Steps 4-6. See `SurfaceRoles` for
+                # why the geometric test can name the wrong part.
+                epi_idx, lv_endo_idx, rv_endo_idx = self._parts_from_roles(
+                    roles, cc_parts, split_base
                 )
-                cog = geom.compute_surface_center_of_gravity(pts)
-                surfaces_data.append(
-                    {"name": component.name, "pts": pts, "surf": surf, "cog": cog}
+                self.logger.info(
+                    f"Surface roles from {mshu.split_sidecar_path(split_base).name}: "
+                    f"EPI={cc_parts[epi_idx].name}, "
+                    f"LV_ENDO={cc_parts[lv_endo_idx].name}, "
+                    f"RV_ENDO={cc_parts[rv_endo_idx].name}"
                 )
-
-            # Step 5: Get LV blood pool center for distance calculations
-            mesh_pts, mesh_elem = mshu.read_carp_mesh(
-                paths.mesh.stem, elem_type=ElemType.Tt, read_tags=True
-            )
-
-            lv_tag = self.labels.get_values_from_names(["LV"])[0]
-            lv_cog = geom.compute_mesh_region_cog(mesh_pts, mesh_elem, lv_tag)
-
-            # Calculate distances from LV center
-            for surf_data in surfaces_data:
-                surf_data["dist_to_lv"] = np.linalg.norm(surf_data["cog"] - lv_cog)
-
-            # Step 6: Identify epicardium by outward-pointing normals
-            epi_found = False
-            for i, surf_data in enumerate(surfaces_data):
-                outward_fraction = geom.outward_normal_fraction(
-                    surf_data["pts"], surf_data["surf"], lv_cog
-                )
-
-                if outward_fraction > 0.7:  # Majority point outward
-                    epi_found = True
-                    epi_idx = i
-
-                    # The other two are endocardia
-                    endo_indices = [j for j in range(3) if j != i]
-
-                    # Closer to LV center = LV endo, farther = RV endo
-                    dist0 = surfaces_data[endo_indices[0]]["dist_to_lv"]
-                    dist1 = surfaces_data[endo_indices[1]]["dist_to_lv"]
-
-                    if dist0 < dist1:
-                        lv_endo_idx = endo_indices[0]
-                        rv_endo_idx = endo_indices[1]
-                    else:
-                        lv_endo_idx = endo_indices[1]
-                        rv_endo_idx = endo_indices[0]
-
-                    self.logger.info(
-                        f"Identified: EPI={cc_parts[epi_idx].name}, "
-                        f"LV_ENDO={cc_parts[lv_endo_idx].name}, "
-                        f"RV_ENDO={cc_parts[rv_endo_idx].name}"
+            else:
+                # Step 4: Identify which surface is which
+                surfaces_data = []
+                for component in cc_parts:
+                    # Stems at the utility boundary: read_carp_mesh takes a Path.
+                    pts, surf = mshu.read_carp_mesh(
+                        component.stem, elem_type=ElemType.Tr, read_tags=False
                     )
-                    break
+                    cog = geom.compute_surface_center_of_gravity(pts)
+                    surfaces_data.append(
+                        {"name": component.name, "pts": pts, "surf": surf, "cog": cog}
+                    )
 
-            if not epi_found:
-                raise SurfaceIdentificationError(
-                    "Could not identify epicardium surface"
+                # Step 5: Get LV blood pool center for distance calculations
+                mesh_pts, mesh_elem = mshu.read_carp_mesh(
+                    paths.mesh.stem, elem_type=ElemType.Tt, read_tags=True
                 )
+
+                lv_tag = self.labels.get_values_from_names(["LV"])[0]
+                lv_cog = geom.compute_mesh_region_cog(mesh_pts, mesh_elem, lv_tag)
+
+                # Calculate distances from LV center
+                for surf_data in surfaces_data:
+                    surf_data["dist_to_lv"] = np.linalg.norm(surf_data["cog"] - lv_cog)
+
+                # Step 6: Identify epicardium by outward-pointing normals
+                epi_found = False
+                for i, surf_data in enumerate(surfaces_data):
+                    outward_fraction = geom.outward_normal_fraction(
+                        surf_data["pts"], surf_data["surf"], lv_cog
+                    )
+
+                    if outward_fraction > 0.7:  # Majority point outward
+                        epi_found = True
+                        epi_idx = i
+
+                        # The other two are endocardia
+                        endo_indices = [j for j in range(3) if j != i]
+
+                        # Closer to LV center = LV endo, farther = RV endo
+                        dist0 = surfaces_data[endo_indices[0]]["dist_to_lv"]
+                        dist1 = surfaces_data[endo_indices[1]]["dist_to_lv"]
+
+                        if dist0 < dist1:
+                            lv_endo_idx = endo_indices[0]
+                            rv_endo_idx = endo_indices[1]
+                        else:
+                            lv_endo_idx = endo_indices[1]
+                            rv_endo_idx = endo_indices[0]
+
+                        self.logger.info(
+                            f"Identified: EPI={cc_parts[epi_idx].name}, "
+                            f"LV_ENDO={cc_parts[lv_endo_idx].name}, "
+                            f"RV_ENDO={cc_parts[rv_endo_idx].name}"
+                        )
+                        break
+
+                if not epi_found:
+                    raise SurfaceIdentificationError(
+                        "Could not identify epicardium surface"
+                    )
 
             # Step 7: Rename files to final output paths
             self._copy_mesh_family(
@@ -300,37 +297,17 @@ class SurfaceLogic:
                 op_tag_base=op_tag,
             )
 
-            # Extract connected components
+            # Same exposure as the epi/endo split above: pinched sheets fuse
+            # under meshtool, so the septum gets the same accept path. Roles
+            # do not apply; the two parts are told apart by size below.
             self.logger.info("Extracting connected components")
-            septum_surfmesh_input = Path(f"{paths.septum_raw}.surfmesh")
-
-            for output_ext in ["vtk", "carp_txt"]:
-                self.meshtool.extract_unreachable(
-                    input_mesh_path=septum_surfmesh_input,
-                    submsh_path=paths.septum_cc_base,  # output from VentricularPathsContract
-                    ofmt=output_ext,
-                    ifmt="vtk",
-                )
-
-            # Find connected components
-            cc_parts = mshu.find_numbered_parts(
-                directory=paths.tmp_dir,
-                base_prefix=paths.septum_cc_base.name,
-            )
-
-            # Same exposure as the epi/endo split above, and until now it had no
-            # count check: a fused surface reached keep_largest_n_components and
-            # died there on a bare ValueError naming neither cause nor remedy.
             EXPECTED_SEPTUM_CC_COUNT = 2
-            if len(cc_parts) < EXPECTED_SEPTUM_CC_COUNT:
-                raise SurfaceIdentificationError(
-                    self._diagnose_component_failure(
-                        surface_stem=paths.septum_raw,
-                        points_path=paths.mesh.pts,
-                        expected=EXPECTED_SEPTUM_CC_COUNT,
-                        found=len(cc_parts),
-                    )
-                )
+            cc_parts, _ = self._connected_components(
+                surface_stem=paths.septum_raw,
+                split_base=paths.septum_cc_base,
+                points_path=paths.mesh.pts,
+                expected=EXPECTED_SEPTUM_CC_COUNT,
+            )
 
             # Keep 2 largest (LV epi and septum)
             cc_parts = mshu.keep_largest_n_components(
@@ -1006,6 +983,7 @@ class SurfaceLogic:
         *,
         expected: int,
         found: int,
+        split_base: Optional[Path] = None,
     ) -> str:
         """
         Explain a wrong component count, and leave a mesh behind to look at.
@@ -1027,6 +1005,10 @@ class SurfaceLogic:
             points_path: The parent mesh `.pts`, whose indexing `.surf` uses.
             expected: Components the caller needed.
             found: Components `meshtool` returned.
+            split_base: Stem the stage reads parts from, e.g.
+                `paths.epi_endo_cc_base`. Used to write the accept command
+                with the right `--prefix`; omitted, the command shows a
+                placeholder.
 
         Returns:
             A message for `SurfaceIdentificationError`, whatever happens.
@@ -1047,19 +1029,154 @@ class SurfaceLogic:
                 output_path=diagnostic_path,
             )
 
+            if split_base is None:
+                prefix_args = "--prefix <name>"
+            else:
+                prefix_args = (
+                    f"--prefix {split_base.name} --output-dir {split_base.parent}"
+                )
+            accept_command = (
+                f"python scripts/utilities/mesh_cli.py split "
+                f"--input {surface_path} --pts {points_path} {prefix_args} "
+                f"--neubc {surface_stem}.neubc --expect {expected}"
+            )
+
             return (
                 f"{message}\n\n"
                 f"{report.summary()}\n\n"
                 f"Inspect: {diagnostic_path}\n"
                 f"  colour by 'pinch'     -> the defects\n"
                 f"  colour by 'component' -> the proposed split\n"
-                f"Accept with: scripts/utilities/split_pinched_surface.py"
+                f"Accept with (from the pycemrg-model-creation repo):\n"
+                f"  {accept_command}\n"
+                f"then re-run the surface stage."
             )
         except Exception as exc:  # noqa: BLE001 - the caller's error is the one that matters
             self.logger.warning(
                 f"Could not diagnose the component failure on {surface_path}: {exc}"
             )
             return message
+
+    def _connected_components(
+        self,
+        surface_stem: Path,
+        split_base: Path,
+        points_path: Path,
+        expected: int,
+    ) -> tuple:
+        """
+        Split an extracted surface into its connected components.
+
+        `meshtool extract unreachable` is the default. An accepted split (see
+        `mshu.write_accepted_split`) replaces it when meshtool fuses pinched
+        sheets. It applies only while the surface just extracted has the same
+        triangles as the one it was accepted for, and the parts are then
+        written again from the new surface, never reused: meshtool changes
+        the row order on each run, and `.eidx` holds row positions.
+
+        Args:
+            surface_stem: Stem of the extracted surface, e.g.
+                `paths.epi_endo_combined`; its `.surf`, `.neubc` and
+                `.surfmesh` are derived by appending.
+            split_base: Stem the parts are written under, e.g.
+                `paths.epi_endo_cc_base`.
+            points_path: The parent mesh `.pts`, whose indexing `.surf` uses.
+            expected: Components the caller needs, at least.
+
+        Returns:
+            `(cc_parts, roles)`: the parts found, and the hand-made
+            `SurfaceRoles` from the accepted split, or None.
+
+        Raises:
+            SurfaceIdentificationError: If fewer than `expected` parts result.
+        """
+        surface_path = Path(f"{surface_stem}.surf")
+        surf = mshu.read_surf(surface_path)
+        roles = None
+
+        if mshu.accepted_split_matches(split_base, surf):
+            # Read before splitting again: the split rewrites the sidecar,
+            # and the hand-made roles must survive that.
+            roles = mshu.read_split_roles(split_base)
+            self.logger.info(
+                f"Split accepted in {mshu.split_sidecar_path(split_base).name}; "
+                "splitting the new surface by edge adjacency, meshtool "
+                "extract unreachable skipped"
+            )
+            mshu.write_accepted_split(
+                surface_path=surface_path,
+                pts_path=points_path,
+                base=split_base,
+                neubc_path=Path(f"{surface_stem}.neubc"),
+                expect=expected,
+                roles=roles,
+            )
+        else:
+            if mshu.split_sidecar_path(split_base).exists():
+                self.logger.warning(
+                    f"The accepted split for {surface_path.name} is stale (the "
+                    "surface changed since it was made) and is ignored. "
+                    "Using meshtool."
+                )
+            # meshtool may write fewer parts than the last run; old
+            # higher-numbered parts must not be counted with the new ones.
+            mshu.remove_split(split_base)
+
+            for output_ext in ["vtk", "carp_txt"]:
+                self.meshtool.extract_unreachable(
+                    # The .surfmesh companion of the extracted surface. Asked of
+                    # the handle: with_suffix would truncate any dotted stem.
+                    input_mesh_path=CarpSurface(surface_stem).surfmesh.stem,
+                    submsh_path=split_base,
+                    ofmt=output_ext,
+                    ifmt="vtk",
+                )
+
+        cc_parts = mshu.find_numbered_parts(
+            directory=split_base.parent, base_prefix=split_base.name
+        )
+
+        if len(cc_parts) < expected:
+            raise SurfaceIdentificationError(
+                self._diagnose_component_failure(
+                    surface_stem=surface_stem,
+                    points_path=points_path,
+                    expected=expected,
+                    found=len(cc_parts),
+                    split_base=split_base,
+                )
+            )
+        return cc_parts, roles
+
+    def _parts_from_roles(
+        self, roles: topo.SurfaceRoles, cc_parts, split_base: Path
+    ) -> tuple:
+        """
+        Positions in `cc_parts` of the parts that `roles` names.
+
+        Found by name, not by list position: `keep_largest_n_components` may
+        drop or reorder parts.
+
+        Raises:
+            SurfaceIdentificationError: If a role names a part that is not in
+                `cc_parts`, e.g. a sliver that was dropped as too small.
+        """
+        positions = {part.name: i for i, part in enumerate(cc_parts)}
+        found = []
+        for role, number in (
+            ("epi", roles.epi),
+            ("lv_endo", roles.lv_endo),
+            ("rv_endo", roles.rv_endo),
+        ):
+            name = f"{split_base.name}.part{number}"
+            if name not in positions:
+                raise SurfaceIdentificationError(
+                    f"Role {role} names {name}, which is not among the kept "
+                    f"parts {sorted(positions)}. Fix `roles` in "
+                    f"{mshu.split_sidecar_path(split_base)}."
+                )
+            found.append(positions[name])
+        return tuple(found)
 
     def _prepare_directories(self, paths: VentricularSurfacePaths) -> None:
         """

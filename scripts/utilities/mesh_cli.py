@@ -310,53 +310,15 @@ def cmd_topology(args: argparse.Namespace) -> None:
 # ---------------------------------------------------------------------------
 
 def cmd_split(args: argparse.Namespace) -> None:
-    from pycemrg_model_creation.utilities.mesh import read_neubc, write_split_component
-    from pycemrg_model_creation.utilities.topology import (
-        analyse_surface_topology,
-        split_surface_components,
-    )
+    from pycemrg_model_creation.utilities.mesh import write_accepted_split
+    from pycemrg_model_creation.utilities.topology import SurfaceRoles
+
+    role_args = (args.epi, args.lv_endo, args.rv_endo)
+    if any(r is not None for r in role_args) and None in role_args:
+        raise SystemExit("Give all of --epi, --lv-endo and --rv-endo, or none.")
 
     input_path = Path(args.input)
-    if input_path.suffix.lower() == ".vtk":
-        raise ValueError(
-            "split needs a CARP .surf, not a .vtk. A .surf is indexed into its "
-            "parent mesh, which is the indexing the .nod and .eidx files must "
-            "use; a .vtk surface carries its own, and the index files would be "
-            "silently wrong. Use `topology` to inspect a .vtk."
-        )
-
-    pts_path = Path(args.pts)
-    points, triangles = _load_surface(input_path, pts_path)
-    report = analyse_surface_topology(triangles)
-
-    print(report.summary())
-
-    # At least, not exactly: the pipeline's own check is
-    # `len(cc_parts) < EXPECTED_CC_COUNT`, and `keep_largest_n_components`
-    # discards the surplus. Edge adjacency routinely finds a few extra slivers
-    # of four or five triangles where a non-manifold edge shaves a flap off a
-    # real surface, and refusing those would reject a split the pipeline would
-    # have used.
-    if args.expect and report.n_components < args.expect:
-        raise SystemExit(
-            f"Refusing to split: need at least {args.expect} components, edge "
-            f"adjacency finds {report.n_components}. The defect is not one this "
-            f"can repair -- inspect the surface before going further."
-        )
-
-    tags = None
-    if args.neubc:
-        neubc_path = Path(args.neubc)
-        if not neubc_path.exists():
-            raise FileNotFoundError(f"neubc file not found: {neubc_path}")
-        rows = read_neubc(neubc_path)
-        if rows.shape[0] != triangles.shape[0]:
-            raise ValueError(
-                f"{neubc_path.name} has {rows.shape[0]} rows but the surface has "
-                f"{triangles.shape[0]} triangles; they do not describe each other."
-            )
-        tags = rows[:, 3]
-    else:
+    if not args.neubc:
         print(
             "No --neubc given, so every triangle is tagged 1 and the elemTag "
             "meshtool writes is lost.\nThat distinction is what shows the septum "
@@ -365,13 +327,26 @@ def cmd_split(args: argparse.Namespace) -> None:
         )
 
     directory = Path(args.output_dir) if args.output_dir else input_path.parent
-    components = split_surface_components(triangles, report, directory / args.prefix)
+    try:
+        # Writes the parts and the sidecar that lets the surface stage accept
+        # them; see `write_accepted_split` for why the sidecar exists.
+        split = write_accepted_split(
+            surface_path=input_path,
+            pts_path=Path(args.pts),
+            base=directory / args.prefix,
+            neubc_path=Path(args.neubc) if args.neubc else None,
+            expect=args.expect,
+            write_vtk=not args.no_vtk,
+            roles=SurfaceRoles(*role_args) if args.epi is not None else None,
+        )
+    except ValueError as exc:
+        raise SystemExit(str(exc)) from exc
+
+    components, tags = split.components, split.tags
+    print(split.topology.summary())
 
     print()
     for component in components:
-        write_split_component(
-            component, points, triangles, tags=tags, write_vtk=not args.no_vtk
-        )
         summary = (f"  {component.name}: {component.n_triangles} triangles, "
                    f"{len(component.vertices)} vertices")
         if tags is not None:
@@ -397,8 +372,10 @@ def cmd_split(args: argparse.Namespace) -> None:
             file=sys.stderr,
         )
 
-    print(f"\nWrote {len(components)} components to {directory}")
-    print("Re-run the surface stage; find_numbered_parts will pick them up.")
+    print(f"\nWrote {len(components)} components and {args.prefix}.split.json "
+          f"to {directory}")
+    print("Re-run the surface stage. It uses these parts for as long as the "
+          "surface it extracts\nmatches the one split here.")
 
 
 # ---------------------------------------------------------------------------
@@ -561,6 +538,16 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Skip the per-component .vtk.",
     )
+    for flag, role in (("--epi", "epicardium"), ("--lv-endo", "LV endocardium"),
+                       ("--rv-endo", "RV endocardium")):
+        spl.add_argument(
+            flag,
+            type=int,
+            metavar="N",
+            help=f"Part number of the {role}. Recorded in the sidecar so the "
+                 "surface stage uses it instead of its geometric test. Give "
+                 "all three or none.",
+        )
     spl.set_defaults(func=cmd_split)
 
     return parser

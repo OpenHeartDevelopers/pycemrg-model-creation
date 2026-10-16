@@ -1,17 +1,27 @@
 # src/pycemrg_model_creation/utilities/mesh.py
 
+import json
 import logging
+import re
 import numpy as np
 import pyvista as pv
 
+from dataclasses import dataclass
 from numpy.typing import NDArray
 from pathlib import Path
-from typing import Dict, Iterable, Tuple
+from typing import Dict, Iterable, Optional, Tuple
 from enum import Enum
 
 from ..meshpaths import CarpMesh, SubmeshParts
 from .geometry import outward_normal_fraction
-from .topology import SurfaceTopology, SplitComponent
+from .topology import (
+    SurfaceFingerprint,
+    SurfaceRoles,
+    SurfaceTopology,
+    SplitComponent,
+    analyse_surface_topology,
+    split_surface_components,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -909,6 +919,8 @@ def write_split_component(
       The same function maps them back, so the indirection has to match.
     * ``.elem`` -- the triangles, reindexed to the component's own vertices.
     * ``.pts``  -- those vertices' coordinates.
+    * ``.lon``  -- placeholder fibres (header 1, then ``1 0 0`` per triangle),
+      because meshtool writes one and `_copy_mesh_family` requires it.
 
     ``.eidx`` and ``.nod`` are binary, written at the width `read_nod_eidx`
     reads them.
@@ -952,6 +964,12 @@ def write_split_component(
     write_pts(points[component.vertices], mesh.pts)
     write_elem(local, element_tags, mesh.elem, elem_type=ElemType.Tr)
 
+    # Placeholder fibres, one row per triangle. meshtool writes a `.lon` for
+    # every part and `SurfaceLogic._copy_mesh_family` requires it; nothing
+    # reads the directions of a surface part.
+    placeholder = np.tile([1.0, 0.0, 0.0], (local.shape[0], 1))
+    write_lon(placeholder, mesh.lon)
+
     # `.nod` is relative to the whole surface's vertex list, not to the parent
     # mesh: `connected_component_to_surface` does `surf2vtx(surf)[nod]`.
     all_vertices = surf2vtx(surf)
@@ -974,6 +992,251 @@ def write_split_component(
         f"Wrote {component.name}: {component.n_triangles} triangles, "
         f"{len(component.vertices)} vertices"
     )
+
+
+# ACCEPTED SPLITS
+#
+# When `meshtool extract unreachable` fuses pinched sheets, the edge-adjacency
+# split is written in its place and "accepted". The sidecar `{base}.split.json`
+# records that decision and the `SurfaceFingerprint` of the surface it was
+# made for. The parts themselves are not kept from run to run: meshtool writes
+# the surface in a new row order each time, and `.eidx` holds row positions.
+# So while the fingerprint matches, the surface stage splits the new surface
+# again. Writer (`write_accepted_split`) and reader (`accepted_split_matches`)
+# both live here, so no caller can write the parts and forget the sidecar.
+# The sidecar may also carry `roles` (`SurfaceRoles`): which part is epi, LV
+# endo and RV endo, decided by hand. The fingerprint does not cover them, so
+# editing them in the JSON does not make the split stale.
+
+
+@dataclass(frozen=True)
+class AcceptedSplit:
+    """
+    What `write_accepted_split` wrote, for its caller to report.
+
+    Attributes:
+        components: The parts, largest first, from `split_surface_components`.
+        topology: The edge-adjacency report the split was made from.
+        tags: One region tag per row of the parent surface, or `None` when no
+            `.neubc` was given and every triangle was tagged 1.
+    """
+
+    components: list
+    topology: SurfaceTopology
+    tags: Optional[NDArray[np.int_]]
+
+
+def split_sidecar_path(base: Path) -> Path:
+    """The sidecar beside a split's parts, e.g. `tmp/epi_endo_cc.split.json`."""
+    # Appended, not with_suffix: `base` may carry a dot of its own.
+    return Path(f"{base}.split.json")
+
+
+def remove_split(base: Path) -> None:
+    """
+    Delete every `{base}.partN.*` file and the sidecar.
+
+    Run before any new parts are written, by meshtool or by
+    `write_accepted_split`. A run that writes fewer parts than the last one
+    would otherwise leave the old higher-numbered parts in place, and
+    `find_numbered_parts` would count a mix of new and old.
+
+    Args:
+        base: Stem the parts hang off, directory included.
+    """
+    pattern = re.compile(rf"^{re.escape(base.name)}\.part\d+\.")
+    removed = 0
+    if base.parent.is_dir():
+        for path in base.parent.iterdir():
+            if pattern.match(path.name):
+                path.unlink()
+                removed += 1
+
+    sidecar = split_sidecar_path(base)
+    if sidecar.exists():
+        sidecar.unlink()
+        removed += 1
+
+    if removed:
+        logger.info(f"Removed {removed} old split files for {base.name}")
+
+
+def accepted_split_matches(base: Path, surf: NDArray[np.int_]) -> bool:
+    """
+    True if a split was accepted for `base` on a surface with the same
+    triangles as `surf` (in any row order).
+
+    Args:
+        base: Stem the parts hang off, directory included.
+        surf: The parent surface as it is now, from `read_surf`.
+
+    Returns:
+        False when there is no sidecar, when it cannot be read, or when its
+        fingerprint differs from the fingerprint of `surf`.
+    """
+    sidecar = split_sidecar_path(base)
+    if not sidecar.exists():
+        return False
+
+    try:
+        recorded = SurfaceFingerprint(**json.loads(sidecar.read_text())["fingerprint"])
+    except (OSError, ValueError, KeyError, TypeError) as exc:
+        logger.warning(f"Cannot read {sidecar.name}, treating it as absent: {exc}")
+        return False
+
+    current = SurfaceFingerprint.of(surf)
+    if recorded != current:
+        logger.warning(
+            f"{sidecar.name} was made from a different surface "
+            f"({recorded.n_triangles} vs {current.n_triangles} triangles now)"
+        )
+        return False
+    return True
+
+
+def read_split_roles(base: Path) -> Optional[SurfaceRoles]:
+    """
+    The surface roles recorded in the sidecar for `base`, if any.
+
+    Args:
+        base: Stem the parts hang off, directory included.
+
+    Returns:
+        None when there is no sidecar, or it has no `roles`.
+
+    Raises:
+        ValueError: If `roles` is present but malformed. Roles are a manual
+            decision, so a typo must stop the run, not be ignored.
+    """
+    sidecar = split_sidecar_path(base)
+    if not sidecar.exists():
+        return None
+
+    roles = json.loads(sidecar.read_text()).get("roles")
+    if roles is None:
+        return None
+    try:
+        return SurfaceRoles(**roles)
+    except TypeError as exc:
+        raise ValueError(
+            f"`roles` in {sidecar} must be exactly epi, lv_endo and rv_endo; "
+            f"got {roles}."
+        ) from exc
+
+
+def write_accepted_split(
+    surface_path: Path,
+    pts_path: Path,
+    base: Path,
+    neubc_path: Optional[Path] = None,
+    expect: Optional[int] = None,
+    write_vtk: bool = True,
+    roles: Optional[SurfaceRoles] = None,
+) -> AcceptedSplit:
+    """
+    Write the edge-adjacency split of a surface as `.partN` families, and the
+    sidecar that lets the surface stage accept them.
+
+    Args:
+        surface_path: The CARP `.surf` to split, extension included. A `.vtk`
+            is refused: its indices are its own, so the `.nod` and `.eidx`
+            would be silently wrong.
+        pts_path: Parent mesh `.pts`, whose indexing the `.surf` uses.
+        base: Stem for the parts, directory included, e.g.
+            `tmp / "epi_endo_cc"` -> `tmp/epi_endo_cc.part0`.
+        neubc_path: Matching `.neubc`, whose region tags go into each part.
+            Omitted, every triangle is tagged 1 and the septum distinction
+            inside the RV endocardium is lost.
+        expect: Refuse unless edge adjacency finds at least this many
+            components. "At least", not "exactly": the stage keeps the
+            largest it needs, and small slivers where a non-manifold edge
+            shaves a flap off a real surface are normal.
+        write_vtk: Also write a `.vtk` per part, for looking at.
+        roles: Which part is epi, LV endo and RV endo, recorded in the
+            sidecar so the surface stage uses them instead of its geometric
+            test. Omitted, the stage decides from geometry.
+
+    Returns:
+        What was written, as an `AcceptedSplit`.
+
+    Raises:
+        ValueError: On a `.vtk` input, too few components, a `.neubc` that
+            does not describe the surface, or a role naming a part that does
+            not exist.
+        FileNotFoundError: If an input file is missing.
+    """
+    if surface_path.suffix.lower() == ".vtk":
+        raise ValueError(
+            f"Split needs a CARP .surf, not {surface_path.name}. A .surf is "
+            "indexed into its parent mesh, which is the indexing the .nod and "
+            ".eidx files must use."
+        )
+    for required in (surface_path, pts_path):
+        if not required.exists():
+            raise FileNotFoundError(f"Not found: {required}")
+
+    triangles = read_surf(surface_path)
+    report = analyse_surface_topology(triangles)
+
+    if expect and report.n_components < expect:
+        raise ValueError(
+            f"Refusing to split: need at least {expect} components, edge "
+            f"adjacency finds {report.n_components}. The defect is not one "
+            "this can repair -- inspect the surface before going further."
+        )
+
+    if roles is not None:
+        highest = max(roles.epi, roles.lv_endo, roles.rv_endo)
+        if highest >= report.n_components:
+            raise ValueError(
+                f"Role names part{highest}, but the split has only "
+                f"{report.n_components} parts (part0..part{report.n_components - 1})."
+            )
+
+    tags = None
+    if neubc_path is not None:
+        if not neubc_path.exists():
+            raise FileNotFoundError(f"Not found: {neubc_path}")
+        rows = read_neubc(neubc_path)
+        if rows.shape[0] != triangles.shape[0]:
+            raise ValueError(
+                f"{neubc_path.name} has {rows.shape[0]} rows but the surface has "
+                f"{triangles.shape[0]} triangles; they do not describe each other."
+            )
+        tags = rows[:, 3]
+
+    points = read_pts(pts_path)
+
+    remove_split(base)
+    components = split_surface_components(triangles, report, base)
+    for component in components:
+        write_split_component(
+            component, points, triangles, tags=tags, write_vtk=write_vtk
+        )
+
+    # The sidecar goes last. If a write above fails, no sidecar exists, and the
+    # stage removes the partial parts instead of trusting them.
+    fingerprint = SurfaceFingerprint.of(triangles)
+    sidecar = {
+        "source_surf": surface_path.name,
+        "n_components": len(components),
+        "fingerprint": {
+            "n_triangles": fingerprint.n_triangles,
+            "digest": fingerprint.digest,
+        },
+    }
+    if roles is not None:
+        sidecar["roles"] = {
+            "epi": roles.epi,
+            "lv_endo": roles.lv_endo,
+            "rv_endo": roles.rv_endo,
+        }
+    split_sidecar_path(base).write_text(json.dumps(sidecar, indent=2))
+    logger.info(f"Wrote {split_sidecar_path(base).name} for {surface_path.name}")
+
+    return AcceptedSplit(components=components, topology=report, tags=tags)
+
+
 # FIBRE OPERATIONS
 def correct_degenerate_fibres(
     fibres: NDArray[np.float64],

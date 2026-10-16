@@ -289,3 +289,116 @@ class TestTheRoundTrip:
 
         vtx = mshu.read_vtx(tmp_path / "out0.vtx")
         assert vtx.tolist() == [10, 11, 12]
+
+
+class TestTheAcceptedSplit:
+    """
+    `write_accepted_split` writes the parts and a sidecar. The sidecar is what
+    lets the surface stage tell a repair made from this surface from parts
+    that index into an older one.
+    """
+
+    @pytest.fixture
+    def inputs(self, tmp_path):
+        write_surf(PINCHED, tmp_path / "epi_endo.surf")
+        write_pts(POINTS, tmp_path / "mesh.pts")
+        return tmp_path / "epi_endo.surf", tmp_path / "mesh.pts"
+
+    def test_it_writes_the_parts_and_the_sidecar(self, inputs, tmp_path):
+        surface, pts = inputs
+        split = mshu.write_accepted_split(surface, pts, tmp_path / "epi_endo_cc")
+
+        assert len(split.components) == 2
+        assert (tmp_path / "epi_endo_cc.part1.elem").is_file()
+        assert (tmp_path / "epi_endo_cc.split.json").is_file()
+
+    def test_the_sidecar_matches_the_surface_it_split(self, inputs, tmp_path):
+        surface, pts = inputs
+        mshu.write_accepted_split(surface, pts, tmp_path / "epi_endo_cc")
+
+        assert mshu.accepted_split_matches(tmp_path / "epi_endo_cc", PINCHED)
+
+    def test_the_sidecar_does_not_match_a_changed_surface(self, inputs, tmp_path):
+        surface, pts = inputs
+        mshu.write_accepted_split(surface, pts, tmp_path / "epi_endo_cc")
+
+        changed = PINCHED.copy()
+        changed[1, 2] = 12
+        assert not mshu.accepted_split_matches(tmp_path / "epi_endo_cc", changed)
+
+    def test_no_sidecar_does_not_match(self, tmp_path):
+        assert not mshu.accepted_split_matches(tmp_path / "epi_endo_cc", PINCHED)
+
+    def test_an_unreadable_sidecar_does_not_match(self, tmp_path):
+        (tmp_path / "epi_endo_cc.split.json").write_text("not json")
+        assert not mshu.accepted_split_matches(tmp_path / "epi_endo_cc", PINCHED)
+
+    def test_old_higher_numbered_parts_are_removed(self, inputs, tmp_path):
+        surface, pts = inputs
+        stale = tmp_path / "epi_endo_cc.part5.elem"
+        stale.write_text("old")
+
+        mshu.write_accepted_split(surface, pts, tmp_path / "epi_endo_cc")
+
+        assert not stale.exists()
+
+    def test_parts_of_another_prefix_are_left_alone(self, inputs, tmp_path):
+        surface, pts = inputs
+        other = tmp_path / "epi_endo.part0.elem"
+        other.write_text("someone else's")
+
+        mshu.write_accepted_split(surface, pts, tmp_path / "epi_endo_cc")
+
+        assert other.exists()
+
+    def test_too_few_components_is_refused_and_writes_nothing(self, inputs, tmp_path):
+        surface, pts = inputs
+        with pytest.raises(ValueError, match="need at least 3"):
+            mshu.write_accepted_split(
+                surface, pts, tmp_path / "epi_endo_cc", expect=3
+            )
+        assert not (tmp_path / "epi_endo_cc.split.json").exists()
+
+    def test_a_role_beyond_the_parts_is_refused(self, inputs, tmp_path):
+        from pycemrg_model_creation.utilities.topology import SurfaceRoles
+
+        surface, pts = inputs
+        roles = SurfaceRoles(epi=1, lv_endo=0, rv_endo=2)
+        with pytest.raises(ValueError, match="only 2 parts"):
+            mshu.write_accepted_split(
+                surface, pts, tmp_path / "epi_endo_cc", roles=roles
+            )
+
+    def test_no_roles_read_back_as_none(self, inputs, tmp_path):
+        surface, pts = inputs
+        mshu.write_accepted_split(surface, pts, tmp_path / "epi_endo_cc")
+        assert mshu.read_split_roles(tmp_path / "epi_endo_cc") is None
+
+    def test_malformed_roles_are_loud(self, inputs, tmp_path):
+        import json
+
+        surface, pts = inputs
+        mshu.write_accepted_split(surface, pts, tmp_path / "epi_endo_cc")
+        sidecar = tmp_path / "epi_endo_cc.split.json"
+        data = json.loads(sidecar.read_text())
+        data["roles"] = {"epi": 0, "lvendo": 1, "rv_endo": 2}
+        sidecar.write_text(json.dumps(data))
+
+        with pytest.raises(ValueError, match="exactly epi, lv_endo and rv_endo"):
+            mshu.read_split_roles(tmp_path / "epi_endo_cc")
+
+    def test_a_vtk_input_is_refused(self, tmp_path):
+        with pytest.raises(ValueError, match="not epi_endo.vtk"):
+            mshu.write_accepted_split(
+                tmp_path / "epi_endo.vtk", tmp_path / "mesh.pts", tmp_path / "cc"
+            )
+
+
+class TestThePlaceholderFibres:
+    def test_each_part_has_one_placeholder_row_per_triangle(self, split):
+        write_split_component(split[0], POINTS, PINCHED)
+
+        lines = split[0].mesh.lon.read_text().split("\n")
+        assert lines[0] == "1"
+        rows = np.loadtxt(split[0].mesh.lon, skiprows=1, ndmin=2)
+        assert rows.tolist() == [[1.0, 0.0, 0.0]] * split[0].n_triangles

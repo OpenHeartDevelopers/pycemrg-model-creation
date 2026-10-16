@@ -33,6 +33,7 @@ Stateless: every function takes arrays and returns arrays. Nothing here touches
 the filesystem.
 """
 
+import hashlib
 import logging
 
 import numpy as np
@@ -315,6 +316,91 @@ class SplitComponent:
     @property
     def n_triangles(self) -> int:
         return int(self.triangles.size)
+
+
+@dataclass(frozen=True)
+class SurfaceFingerprint:
+    """
+    Identifies a surface by its triangles, so that a split made from it can
+    prove later that it still indexes into the same surface.
+
+    Why this exists: the surface stage extracts the `.surf` again on every
+    run. When a split was accepted for that surface, the stage must know if
+    the new `.surf` is the same surface (then it splits it again the same
+    way) or a changed one (then the acceptance no longer applies). So the
+    split records the fingerprint of the surface it came from, and the stage
+    compares it with the fingerprint of the new surface.
+
+    "Same surface" means the same set of triangles. `meshtool` writes the
+    same triangles in a different row order on each run (seen on
+    AJR5d032a4), so row order is ignored. The vertex order inside a row is
+    kept: it is the triangle's orientation, and the stage reads outward
+    normals, so a flipped triangle is a real change.
+
+    This is an identity check, not a security measure and not a cache key.
+    The digest is SHA-256 only because it is in the standard library and two
+    different surfaces will not collide.
+
+    Attributes:
+        n_triangles: Rows in the surface. Kept beside the digest so that a
+            mismatch can be described in a log ("83911 vs 83907 triangles").
+        digest: SHA-256 of the triangle array, hex.
+    """
+
+    n_triangles: int
+    digest: str
+
+    @classmethod
+    def of(cls, surf: NDArray[np.int_]) -> "SurfaceFingerprint":
+        """Fingerprint an (n, 3) triangle array, as `read_surf` returns it."""
+        # Hash the parsed array, not the file bytes: meshtool may format the
+        # same triangles differently between runs, and that must not count as
+        # a different surface. A fixed dtype and C order make the bytes depend
+        # on the values alone, not on the platform's default int.
+        # reshape: `read_surf` returns a one-triangle file as 1-D.
+        triangles = np.asarray(surf, dtype=np.int64).reshape(-1, 3)
+        # Sort the rows (not the vertices in a row): row order is not part of
+        # the surface's identity, orientation is. See the class docstring.
+        triangles = np.ascontiguousarray(triangles[np.lexsort(triangles.T[::-1])])
+        return cls(
+            n_triangles=int(triangles.shape[0]),
+            digest=hashlib.sha256(triangles.tobytes()).hexdigest(),
+        )
+
+
+@dataclass(frozen=True)
+class SurfaceRoles:
+    """
+    Which part of an accepted split is which surface, decided by hand.
+
+    The surface stage normally decides this from geometry (outward normals
+    and distance to the LV centre). That test assumes the normals point out
+    of the myocardium; on some meshes they point in, and the stage then
+    names the wrong part as epicardium. These roles replace the test.
+
+    Values are part numbers: 0 means `{base}.part0`. They stay valid for as
+    long as the split's `SurfaceFingerprint` matches, because the same set of
+    triangles always splits into the same parts, numbered largest first.
+
+    Attributes:
+        epi: Part number of the epicardium.
+        lv_endo: Part number of the LV endocardium.
+        rv_endo: Part number of the RV endocardium.
+
+    Raises:
+        ValueError: If a value is negative or two roles name the same part.
+    """
+
+    epi: int
+    lv_endo: int
+    rv_endo: int
+
+    def __post_init__(self) -> None:
+        values = (self.epi, self.lv_endo, self.rv_endo)
+        if any(not isinstance(v, int) or isinstance(v, bool) or v < 0 for v in values):
+            raise ValueError(f"Surface roles must be part numbers >= 0; got {self}.")
+        if len(set(values)) != 3:
+            raise ValueError(f"Each surface role must name a different part; got {self}.")
 
 
 def split_surface_components(

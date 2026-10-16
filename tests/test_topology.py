@@ -14,6 +14,8 @@ import numpy as np
 import pytest
 
 from pycemrg_model_creation.utilities.topology import (
+    SurfaceFingerprint,
+    SurfaceRoles,
     SurfaceTopology,
     analyse_surface_topology,
 )
@@ -222,3 +224,58 @@ class TestVertexIndexing:
             sparse_report.pinch_fan_counts.tolist()
         )
         assert sparse_report.pinch_vertices.tolist() == [0]
+
+
+class TestSurfaceFingerprint:
+    """
+    The fingerprint proves that an accepted split still indexes into the
+    surface the stage just extracted. It must ignore nothing that would move
+    an index, and depend on nothing else.
+    """
+
+    def test_the_same_triangles_give_the_same_fingerprint(self):
+        assert SurfaceFingerprint.of(TETRAHEDRON) == SurfaceFingerprint.of(
+            TETRAHEDRON.copy()
+        )
+
+    def test_one_changed_vertex_index_changes_it(self):
+        changed = TETRAHEDRON.copy()
+        changed[3, 2] = 4
+        assert SurfaceFingerprint.of(changed) != SurfaceFingerprint.of(TETRAHEDRON)
+
+    def test_reordered_rows_do_not_change_it(self):
+        """meshtool writes the same surface in a new row order on each run."""
+        assert SurfaceFingerprint.of(TETRAHEDRON[::-1]) == SurfaceFingerprint.of(
+            TETRAHEDRON
+        )
+
+    def test_a_flipped_triangle_changes_it(self):
+        """In-row vertex order is orientation, which the stage reads."""
+        flipped = TETRAHEDRON.copy()
+        flipped[0] = flipped[0, ::-1]
+        assert SurfaceFingerprint.of(flipped) != SurfaceFingerprint.of(TETRAHEDRON)
+
+    def test_the_integer_width_does_not_matter(self):
+        assert SurfaceFingerprint.of(TETRAHEDRON.astype(np.int32)) == (
+            SurfaceFingerprint.of(TETRAHEDRON.astype(np.int64))
+        )
+
+    def test_a_one_dimensional_single_triangle_is_one_triangle(self):
+        assert SurfaceFingerprint.of(np.array([0, 1, 2])).n_triangles == 1
+
+
+class TestSurfaceRoles:
+    def test_three_different_parts_are_accepted(self):
+        assert SurfaceRoles(epi=0, lv_endo=2, rv_endo=1).epi == 0
+
+    def test_two_roles_on_one_part_are_refused(self):
+        with pytest.raises(ValueError, match="different part"):
+            SurfaceRoles(epi=0, lv_endo=0, rv_endo=1)
+
+    def test_a_negative_part_is_refused(self):
+        with pytest.raises(ValueError, match=">= 0"):
+            SurfaceRoles(epi=-1, lv_endo=0, rv_endo=1)
+
+    def test_a_non_integer_part_is_refused(self):
+        with pytest.raises(ValueError, match=">= 0"):
+            SurfaceRoles(epi="0", lv_endo=2, rv_endo=1)
