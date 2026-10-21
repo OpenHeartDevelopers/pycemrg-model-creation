@@ -15,6 +15,7 @@ from pycemrg_model_creation.tools.mguvc import (
     UvcBoundary,
     boundary_inputs,
     outputs_for,
+    septum_overlap,
 )
 
 MESH = CarpMesh("/data/surfaces_uvc/BiV/BiV")
@@ -140,3 +141,32 @@ class TestDottedMeshStems:
     def test_a_dotted_mesh_stem_survives_into_the_output_names(self):
         outputs = outputs_for(CarpMesh("/data/heart.v2"), UVC_DIR)
         assert outputs.uvc_z.name == "heart.v2.uvc_z.dat"
+
+
+class TestSeptumOverlap:
+    LVENDO = list(range(0, 100))
+    RVENDO = list(range(100, 200))
+
+    def test_septum_on_rv_side_passes(self):
+        overlap = septum_overlap(self.LVENDO, self.RVENDO, range(150, 170))
+        assert (overlap.n_sept, overlap.on_lvendo, overlap.on_rvendo) == (20, 0, 20)
+        assert not overlap.on_lv_side
+
+    def test_septum_on_lv_side_is_flagged(self):
+        # The failure shape: a swapped split puts rvsept on lvendo.
+        overlap = septum_overlap(self.LVENDO, self.RVENDO, range(10, 30))
+        assert overlap.on_lvendo == 20
+        assert overlap.on_lv_side
+
+    def test_septum_touching_neither_endo_passes(self):
+        # AJR5d03295 completed with no rvsept node on rvendo; a low RV overlap
+        # is not a fault.
+        overlap = septum_overlap(self.LVENDO, self.RVENDO, range(300, 320))
+        assert overlap.on_rvendo == 0
+        assert not overlap.on_lv_side
+
+    def test_few_shared_pinch_nodes_pass(self):
+        # Completed subjects share up to 4 nodes with lvendo.
+        overlap = septum_overlap(self.LVENDO, self.RVENDO, [*range(96, 100), *range(100, 200)])
+        assert overlap.on_lvendo == 4
+        assert not overlap.on_lv_side

@@ -11,8 +11,15 @@ import shutil
 from datetime import datetime
 
 from pycemrg_model_creation.logic.contracts import VentricularUVCPaths
-from pycemrg_model_creation.tools.mguvc import boundary_inputs, outputs_for
+from pycemrg_model_creation.logic.surfaces import SurfaceIdentificationError
+from pycemrg_model_creation.tools.mguvc import (
+    UvcBoundary,
+    boundary_inputs,
+    outputs_for,
+    septum_overlap,
+)
 from pycemrg_model_creation.tools.wrappers import CarpWrapper
+from pycemrg_model_creation.utilities.mesh import read_vtx
 from pycemrg_model_creation.utilities.uvc import write_etags_file
 
 
@@ -74,6 +81,8 @@ class UvcLogic:
 
         Raises:
             FileNotFoundError: If required input files are missing
+            SurfaceIdentificationError: If rvsept lies on the LV endocardium
+                                        (a wrong surface split upstream)
             FileExistsError: If the output directory exists and neither
                              backup_existing nor overwrite_existing is set
             RuntimeError: If mguvc execution fails or outputs are invalid
@@ -92,6 +101,7 @@ class UvcLogic:
         self.logger.info("=" * 60)
 
         self._validate_inputs(paths)
+        self._check_septum_side(paths)
         self._generate_etags(paths, lv_tag, rv_tag)
         self._prepare_output_dir(paths, backup_existing, overwrite_existing)
         self._run_mguvc(paths, np)
@@ -142,6 +152,39 @@ class UvcLogic:
             )
 
         self.logger.debug("All input files validated successfully")
+
+    def _check_septum_side(self, paths: VentricularUVCPaths) -> None:
+        """
+        Refuse an rvsept that lies on the LV endocardium.
+
+        A wrong surface split puts it there. mguvc then fails in its UVC-PHI
+        step with only ``unordered_map::at()`` on stderr, which names nothing.
+        See `tools.mguvc.SeptumOverlap`.
+
+        Args:
+            paths: VentricularUVCPaths contract
+
+        Raises:
+            SurfaceIdentificationError: If most rvsept nodes are on lvendo
+        """
+        vtx = boundary_inputs(paths.biv_mesh)
+        overlap = septum_overlap(
+            lvendo=read_vtx(vtx[UvcBoundary.LV_ENDO]),
+            rvendo=read_vtx(vtx[UvcBoundary.RV_ENDO]),
+            rvsept=read_vtx(vtx[UvcBoundary.RV_SEPT]),
+        )
+        summary = (
+            f"rvsept: {overlap.n_sept} nodes, {overlap.on_lvendo} on lvendo, "
+            f"{overlap.on_rvendo} on rvendo"
+        )
+        self.logger.info(summary)
+
+        if overlap.on_lv_side:
+            raise SurfaceIdentificationError(
+                f"{summary}. rvsept lies on the LV endocardium. Check the "
+                f"epi_endo split (--lv-endo/--rv-endo swapped?) or the septum "
+                f"part, then re-run surfaces."
+            )
 
     def _generate_etags(
         self,

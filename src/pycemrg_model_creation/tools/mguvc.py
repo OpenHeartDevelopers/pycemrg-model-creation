@@ -20,6 +20,9 @@ from enum import Enum
 from pathlib import Path
 from typing import Dict, Tuple, Union
 
+import numpy as np
+from numpy.typing import ArrayLike
+
 from ..meshpaths import CarpMesh
 
 
@@ -209,3 +212,58 @@ def outputs_for(
         PosixPath('/data/BiV/uvc/BiV.uvc_z.dat')
     """
     return MguvcOutputs(mesh=mesh, output_dir=Path(output_dir))
+
+
+# Share of rvsept nodes on the LV endocardium above which the septum is on the
+# wrong side. Cohort margins (02_project_stanford, n=17): mguvc failed for all
+# five subjects at 0.97-1.00 and completed for every subject at <= 0.0015, so
+# 0.5 sits far from both.
+SEPTUM_ON_LVENDO_LIMIT = 0.5
+
+
+@dataclass(frozen=True)
+class SeptumOverlap:
+    """
+    How many `rvsept` nodes each endocardial boundary shares.
+
+    `rvsept` belongs on the RV side of the septum. When a surface split names
+    the wrong part, it lands on the LV endocardium instead. mguvc then finds no
+    posterior LV faces and dies in its UVC-PHI step with a bare
+    ``unordered_map::at()``.
+
+    Only the LV side is tested. A valid `rvsept` may share no nodes with
+    `rvendo` at all, so a low RV overlap is not a fault.
+    """
+
+    n_sept: int
+    on_lvendo: int
+    on_rvendo: int
+
+    @property
+    def lvendo_fraction(self) -> float:
+        return self.on_lvendo / self.n_sept if self.n_sept else 0.0
+
+    @property
+    def on_lv_side(self) -> bool:
+        return self.lvendo_fraction > SEPTUM_ON_LVENDO_LIMIT
+
+
+def septum_overlap(
+    lvendo: ArrayLike, rvendo: ArrayLike, rvsept: ArrayLike
+) -> SeptumOverlap:
+    """
+    Count the `rvsept` nodes shared with each endocardial boundary.
+
+    Pure: takes node-index arrays (as `utilities.mesh.read_vtx` returns them),
+    so reading the files stays with the caller.
+
+    Example:
+        >>> septum_overlap([1, 2, 3], [7, 8], [2, 3]).on_lv_side
+        True
+    """
+    sept = np.unique(np.asarray(rvsept))
+    return SeptumOverlap(
+        n_sept=int(sept.size),
+        on_lvendo=int(np.intersect1d(sept, lvendo).size),
+        on_rvendo=int(np.intersect1d(sept, rvendo).size),
+    )
