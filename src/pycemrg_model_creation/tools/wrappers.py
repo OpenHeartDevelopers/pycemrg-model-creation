@@ -18,6 +18,10 @@ DEFAULT_FIBRE_ANGLES: Dict[str, float] = {
     "beta_epi": 25,
 }
 
+# mguvc exits non-zero with this after writing its outputs; the
+# expected_outputs check is what decides success.
+MGUVC_BENIGN_ERRORS: Sequence[str] = ("Caught exception 'unordered_map::at()'",)
+
 
 class MeshDataOperation(Enum):
     """Defines operations for command: [meshtool insert mesh]"""
@@ -282,6 +286,10 @@ class CarpWrapper:
         Raises:
             RuntimeError: If mguvc execution fails
 
+        A non-zero exit whose stderr holds a `MGUVC_BENIGN_ERRORS` string
+        (``unordered_map::at()``) is logged as a warning, not raised, but
+        only when `expected_outputs` is given to confirm the outputs exist.
+
         Output files created in output_dir (basename from model_name):
             - {basename}.uvc_z.dat - Apico-basal coordinate
             - {basename}.uvc_rho.dat - Transmural coordinate
@@ -338,8 +346,10 @@ class CarpWrapper:
         self.logger.debug(f"Tags file: {tags_file}")
         self.logger.debug(f"mguvc command: {' '.join(cmd)}")
 
-        # Execute via CarpRunner
-        self.runner.run(cmd, expected_outputs=expected_outputs)
+        # Execute via CarpRunner. The benign error is ignored only when
+        # expected_outputs can confirm the run actually succeeded.
+        ignore = MGUVC_BENIGN_ERRORS if expected_outputs else None
+        self.runner.run(cmd, expected_outputs=expected_outputs, ignore_errors=ignore)
 
         self.logger.info("mguvc completed successfully")
 
